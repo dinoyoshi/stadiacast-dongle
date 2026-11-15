@@ -2,7 +2,7 @@
  * USB Audio Class 2.0 speaker as a TinyUSB application class driver (esp_tinyusb leaves the
  * built-in audio class off, and a small driver of our own is easier to keep beside XInput).
  *
- * The host streams 48 kHz 16-bit stereo on isochronous OUT 0x02, one packet per millisecond.
+ * The host streams 48 kHz 16-bit stereo on isochronous OUT 0x02, one packet per (micro)frame.
  * The packets are taken in the USB interrupt (xfer_isr), so the endpoint is re-armed before the
  * next one arrives whatever the USB task is doing, and go into a stream buffer that
  * usb_pad_audio_read() drains. The clock is fixed at 48 kHz; volume (-50..0 dB) and mute are
@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/stream_buffer.h"
 
@@ -45,6 +46,8 @@ static struct {
     int16_t volume;     /* 1/256 dB */
     volatile int32_t gain; /* Q15, 0 when muted */
     volatile uint32_t overflows;
+    volatile uint32_t packets, bytes, failed; /* since the last report */
+    int64_t report_at;
 } U;
 
 static void update_gain(void)
@@ -114,7 +117,10 @@ static bool set_interface(uint8_t rhport, uint8_t itf, uint8_t alt)
         if (U.alt != 1) ESP_LOGI(TAG, "the host started playing");
         U.alt = 1;
         TU_ASSERT(usbd_edpt_iso_activate(rhport, U.ep));
-        TU_ASSERT(usbd_edpt_xfer(rhport, USB_AUDIO_EP_OUT, s_buf.out, USB_AUDIO_EP_SIZE, false));
+        if (!usbd_edpt_xfer(rhport, USB_AUDIO_EP_OUT, s_buf.out, USB_AUDIO_EP_SIZE, false)) {
+            ESP_LOGE(TAG, "could not arm the audio endpoint");
+            return false;
+        }
     } else if (U.alt == 1) {
         ESP_LOGI(TAG, "the host stopped playing (%u packets did not fit)", (unsigned)U.overflows);
         U.overflows = 0;
@@ -213,6 +219,9 @@ static bool uac_xfer_isr(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, 
     if (ep_addr != USB_AUDIO_EP_OUT) return false;
     BaseType_t woken = pdFALSE;
     n &= ~3u;
+    if (result != XFER_RESULT_SUCCESS) U.failed++;
+    U.packets++;
+    U.bytes += n;
     if (result == XFER_RESULT_SUCCESS && n && U.alt == 1) {
         if (xStreamBufferSpacesAvailable(U.ring) >= n) {
             xStreamBufferSendFromISR(U.ring, s_buf.out, n, &woken);
@@ -251,6 +260,16 @@ size_t usb_pad_audio_read(int16_t *pcm, size_t max_frames, uint32_t timeout_ms)
         return 0;
     }
     size_t n = xStreamBufferReceive(U.ring, pcm, max_frames * 4, pdMS_TO_TICKS(timeout_ms)) / 4;
+    int64_t now = esp_timer_get_time();
+    if (now - U.report_at >= 10000000) { /* what the endpoint did in the last 10 s, while playing */
+        uint32_t packets = U.packets, bytes = U.bytes, failed = U.failed;
+        U.packets = U.bytes = U.failed = 0;
+        if (U.alt == 1 || packets) {
+            ESP_LOGI(TAG, "%u packets (%u B, %u failed) in %d s, %u did not fit", (unsigned)packets, (unsigned)bytes,
+                     (unsigned)failed, (int)((now - U.report_at) / 1000000), (unsigned)U.overflows);
+        }
+        U.report_at = now;
+    }
     int32_t g = U.gain;
     if (g != 32768) {
         for (size_t i = 0; i < n * 2; i++) pcm[i] = (int16_t)((pcm[i] * g) >> 15);

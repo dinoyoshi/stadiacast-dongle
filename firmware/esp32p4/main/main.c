@@ -110,7 +110,9 @@ void app_main(void)
     }
 
 #if CONFIG_DONGLE_USB_AUDIO
-    xTaskCreate(audio_task, "audio", STADIA_AUDIO_STACK, NULL, 6, NULL);
+    if (xTaskCreate(audio_task, "audio", STADIA_AUDIO_STACK, NULL, 6, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "no memory for the audio task: no headset audio");
+    }
 #endif
     ESP_LOGI(TAG, "ready: wake the controller (about 1 s press of the Stadia button)");
 }
