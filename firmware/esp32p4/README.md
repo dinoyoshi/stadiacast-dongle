@@ -21,7 +21,7 @@ is in [docs/progress.md](docs/progress.md).
 | Four controller modes: Xbox 360, DualShock 4, Switch Pro, HID gamepad | tested on Linux (Steam sees DS4 mode as a PS4 controller) |
 | Runs from the OTG USB-C port alone, LED shows its state | tested on the board |
 | Updates the C6's ESP-Hosted firmware from the P4 | done once: 2.12.11 to 2.13.1 |
-| Headset microphone: the headset on the controller is the PC's USB microphone | tested on Linux (PipeWire) |
+| Headset microphone: the headset on the controller is the PC's USB microphone, push to talk on the Assistant button | tested on Linux (PipeWire) |
 
 The controller needs its **Wi-Fi firmware** (ours runs build 316382; the Python receiver is
 tested with `ota.282115`). See [Known limits](#known-limits) for what is rough.
@@ -132,6 +132,8 @@ Nintendo B.
 | Options (⋯) | Back | Share | − | button 7 |
 | Capture | (none) | touchpad click | Capture | button 12 |
 | Assistant | (none) | (none) | (none) | button 13 |
+
+Assistant is also push to talk for the headset microphone (below).
 | L2 / R2 | analog triggers | analog + digital | ZL / ZR (digital) | analog axes |
 
 Sticks are passed through raw (no deadzone, as a real pad).
@@ -235,7 +237,11 @@ after DTLS connects, the same as the Python receiver.
   Microsoft OS 2.0 descriptor, and the headphones get the USB Audio 2.0 driver. Linux's xpad
   drives 1209 XInput pads too (kernel 5.12+).
 - **Microphone.** The same sound card has a microphone (48 kHz 16-bit mono, volume -50 to 0 dB
-  and mute), fed by the headset plugged into the controller.
+  and mute), fed by the headset plugged into the controller. It is **push to talk**: hold the
+  Assistant button to talk. The board asks the controller for its microphone when the button
+  goes down (sound arrives a frame or two later) and tells it to stop 0.3 s after it comes up,
+  so the end of a word is kept; anything the controller still sends then is dropped, and the
+  computer hears silence. menuconfig → *Push to talk* off keeps the microphone always on.
 
   ```
   DisplayToController #5 BoolValue(true) -> the controller sends Opus (PT 111, 20 ms, DTX)
@@ -246,8 +252,9 @@ after DTLS connects, the same as the Python receiver.
   Nothing documented that request: a probe build sent each display request whose use was not
   known, and #5 with `true` started the stream 24 ms later (controller firmware 316382). The
   stream is under the display offer's audio SSRC and uses DTX (about 7 tiny packets a second
-  while nobody talks). It stopped by itself once during that test, so the board sends the
-  request after each link's SetAudioMode answer and again whenever nothing has come for 3 s. The
+  while nobody talks). It stopped by itself once during that test, so the board repeats the
+  request whenever nothing has come for a while: 1 s while Assistant is held, 3 s with push to
+  talk off (then the first request goes out after each link's SetAudioMode answer). The
   buffer follows the computer's clock: past 120 ms of backlog it skips back to 40 ms, and when it
   runs dry the computer gets silence until it has 40 ms again. menuconfig → *Pass the
   controller's microphone to the USB headset* turns the request and the decoder off.
@@ -304,7 +311,10 @@ same libopus as the board.
 
 With `STADIA_MIC=1` as well, and `--mic-echo` on the fake controller, the fake controller sends
 every frame it plays back as its own SRTP stream, the host build decodes it as the microphone,
-and prints the tone it hears every 5 s (`microphone 5.0 s, 440 Hz, peak 8310`).
+and prints the tone it hears every 5 s (`microphone 5.0 s, 440 Hz, peak 8310`). Add
+`STADIA_MIC_PTT=1` and `--talk 4` for push to talk: the fake controller holds Assistant for 4 s,
+and the host build should decode about 4.3 s of tone and log `push to talk: talking`, then
+`microphone off (DisplayToController #5 false) sent`.
 
 ### If the Wi-Fi doesn't come up
 

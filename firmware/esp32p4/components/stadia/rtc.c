@@ -77,36 +77,52 @@ static void send_rpc(int kind, uint32_t ticket, int code, const char *message, c
  * under the display offer's audio SSRC. Found on a controller on firmware 316382 by sending each
  * request whose use was not known: it answered OK and the stream began 24 ms later. The stream
  * also stopped by itself after a while, so the request is repeated whenever nothing has come for
- * MIC_QUIET_MS (it is answered OK while the stream runs too). */
+ * MIC_QUIET_MS (it is answered OK while the stream runs too).
+ *
+ * With push to talk the request goes out when the Assistant button is pressed (the stream starts
+ * within a frame or two), is repeated sooner (MIC_PTT_QUIET_MS) while it is held, and #5 false
+ * goes out once it is let go; mic.c drops whatever still comes while nobody talks. */
 #define MIC_ON_DELAY_MS 500 /* after the SetAudioMode answer */
 #define MIC_QUIET_MS 3000
+#define MIC_PTT_QUIET_MS 1000 /* DTX still sends a frame every 400 ms or so in silence */
 
 static struct {
-    int64_t next_at; /* 0: not yet due */
+    int64_t ready_at; /* 0: not yet due */
+    int64_t sent_at;
     uint32_t ticket;
     uint32_t sent;
+    bool on; /* the last request was true */
 } MIC;
 
-static void send_mic_on(void)
+static void send_mic(bool on, int64_t now)
 {
     uint8_t v[4], msg[8];
     pbw_t b = PBW(v, sizeof(v));
-    pbw_uint(&b, 1, 1);
+    if (on) pbw_uint(&b, 1, 1); /* false is the empty BoolValue */
     pbw_t m = PBW(msg, sizeof(msg));
     pbw_bytes(&m, D2C_MIC_ON, b.buf, b.len);
     MIC.ticket = ++D.ticket;
     send_rpc(1, MIC.ticket, 0, NULL, m.buf, m.len);
-    if (MIC.sent++ < 3) SLOGI(TAG, "microphone on (DisplayToController #5 true) sent");
+    if (g_cfg.mic_push_to_talk || MIC.sent < 3) {
+        SLOGI(TAG, "microphone %s (DisplayToController #5 %s) sent", on ? "on" : "off", on ? "true" : "false");
+    }
+    MIC.sent++;
+    MIC.sent_at = now;
+    MIC.on = on;
 }
 
 static void mic_tick(int64_t now)
 {
     if (!g_cfg.mic || !rtc_link_up(&D.link) || !D.audio_answered) return;
-    if (!MIC.next_at) MIC.next_at = now + MIC_ON_DELAY_MS;
-    if (now < MIC.next_at) return;
-    int64_t last = mic_last_packet_ms();
-    if (!MIC.sent || now - last >= MIC_QUIET_MS) send_mic_on();
-    MIC.next_at = now + MIC_QUIET_MS;
+    if (!MIC.ready_at) MIC.ready_at = now + MIC_ON_DELAY_MS;
+    if (now < MIC.ready_at) return;
+    bool ptt = g_cfg.mic_push_to_talk;
+    if (ptt && !mic_talking()) {
+        if (MIC.on) send_mic(false, now);
+        return;
+    }
+    int64_t quiet = ptt ? MIC_PTT_QUIET_MS : MIC_QUIET_MS;
+    if (!MIC.on || (now - MIC.sent_at >= quiet && now - mic_last_packet_ms() >= quiet)) send_mic(true, now);
 }
 
 /* ---- display RPCs ------------------------------------------------------------------- */
@@ -320,7 +336,9 @@ static void on_rpc(const uint8_t *data, size_t len)
             SLOGI(TAG, "notification ControllerToDisplay #%u", (unsigned)variant.field);
         }
     } else if (rpc.kind == 2 && MIC.ticket && rpc.ticket == MIC.ticket) {
-        if (rpc.code != 0 || MIC.sent <= 3) SLOGI(TAG, "microphone on answered: code %u", (unsigned)rpc.code);
+        if (rpc.code != 0 || MIC.sent <= 3 || g_cfg.mic_push_to_talk) {
+            SLOGI(TAG, "microphone %s answered: code %u", MIC.on ? "on" : "off", (unsigned)rpc.code);
+        }
     } else if (rpc.kind == 2 && D.audio_sent && rpc.ticket == D.audio_ticket) {
         /* a repeat in the same boot is FAILED_PRECONDITION ("already in WebRTC Opus mode"): open too */
         SLOGI(TAG, "SetAudioMode answered: code %u%s", (unsigned)rpc.code, rpc.code == 9 ? " (already open)" : "");
@@ -403,7 +421,7 @@ static void display_on_connected(rtc_link_t *L)
     D.ready_at = 0;
     D.start_sent = false;
     D.audio_sent = D.audio_answered = false; /* the microphone waits for this link's answer */
-    MIC.next_at = 0, MIC.ticket = 0, MIC.sent = 0;
+    memset(&MIC, 0, sizeof(MIC));
     audio_set_route(false);
 }
 

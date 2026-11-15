@@ -20,6 +20,7 @@ typedef struct {
     uint8_t audio_complexity; /* Opus complexity 1..10; 0 = 8 */
     bool allow_clearcut;      /* false (the live preset): refuse Clearcut with a TLS alert */
     bool mic;                 /* ask for the controller's microphone and decode it (needs audio) */
+    bool mic_push_to_talk;    /* with mic: only while the Assistant button is held */
 } stadia_config_t;
 
 /* Start every server in its own task. False if one could not start. */
@@ -76,3 +77,7 @@ void stadia_audio_pcm(const int16_t *pcm, size_t frames);
  * chunks of one Opus frame (usually 960 frames). The stream's own clock: the receiver buffers. */
 typedef void (*stadia_mic_cb_t)(const int16_t *pcm, size_t frames, void *arg);
 void stadia_set_mic_callback(stadia_mic_cb_t cb, void *arg);
+/* Push to talk (stadia_config_t.mic_push_to_talk), changed at run time; it applies on the next
+ * tick of the rtc task. Not saved: whoever calls it keeps the setting. */
+void stadia_mic_set_push_to_talk(bool on);
+bool stadia_mic_push_to_talk(void);

@@ -6,7 +6,8 @@
  * STADIA_AUDIO=1 opens the headset audio route and plays a 440 Hz tone into it, 10 ms at a time
  * as a USB host would (the fake controller counts the frames it would play).
  * STADIA_MIC=1 also decodes what the controller sends as its microphone (run the fake
- * controller with --mic-echo: it sends the tone back) and prints the decoded tone's frequency. */
+ * controller with --mic-echo: it sends the tone back) and prints the decoded tone's frequency.
+ * STADIA_MIC_PTT=1 passes it only while Assistant is held (fake controller --talk SECONDS). */
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -90,6 +91,7 @@ int main(int argc, char **argv)
         .allow_clearcut = getenv("STADIA_ALLOW_CLEARCUT") != NULL,
         .audio = getenv("STADIA_AUDIO") != NULL,
         .mic = getenv("STADIA_MIC") != NULL,
+        .mic_push_to_talk = getenv("STADIA_MIC_PTT") != NULL,
     };
     stadia_set_pad_callback(on_pad, NULL);
     stadia_set_mic_callback(on_mic, NULL);

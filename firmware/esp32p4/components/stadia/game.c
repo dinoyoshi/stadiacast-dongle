@@ -87,6 +87,8 @@ void pad_report(const stadia_pad_t *pad, const char *via)
               pad->ry, pad->lt, pad->rt);
         if (!n) P.stick_log_at = now + STICK_LOG_MS;
     }
+    if (!pad->connected || (changed & STADIA_BTN_ASSISTANT))
+        mic_set_talk(pad->connected && (pad->buttons & STADIA_BTN_ASSISTANT));
     P.last = *pad;
     P.have_last = pad->connected;
     port_lock();

@@ -153,6 +153,7 @@ class FakeController:
         # sequence of its own, as a real controller sends its microphone.
         self.mic_echo = False
         self.mic_on = False
+        self.mic_requests: list[bool] = []
         self.mic_sent = 0
         self._mic_seq = 1000
         self.headset_plugged = False  # GetControllerStateResponse.f4
@@ -288,8 +289,9 @@ class FakeController:
                 self._on_set_audio_mode(rpc["ticket"])
             elif msg.HasField("request5"):
                 # #5 BoolValue(true) turns the microphone stream on (a 316382 controller answers
-                # OK and starts sending within ~25 ms)
-                self.mic_on = self.mic_on or msg.request5.value
+                # OK and starts sending within ~25 ms); false (push to talk let go) turns it off here
+                self.mic_on = msg.request5.value
+                self.mic_requests.append(msg.request5.value)
                 self.endpoint.send_wire(WIRE_ID_DC_RPC_CONTROLLER, p.rpc_response(rpc["ticket"]))
             else:
                 self.endpoint.send_wire(
@@ -1140,7 +1142,24 @@ async def run_game(fc: FakeController, args, t0: float) -> int:
                 flush=True,
             )
         print(f"[{time.monotonic() - t0:7.3f}] holding the game session for {args.game:g} s", flush=True)
-        await asyncio.sleep(args.game)
+        if args.talk > 0:
+            # push to talk: Assistant (0x400) held for --talk seconds, after 2 s of not talking
+            await asyncio.sleep(2)
+            before = fc.mic_sent
+            fc.send_game_input(buttons=0x400)
+            print(f"[{time.monotonic() - t0:7.3f}] Assistant held ({before} mic frames before)", flush=True)
+            await asyncio.sleep(args.talk)
+            held = fc.mic_sent - before
+            fc.send_game_input(buttons=0)
+            await asyncio.sleep(1)
+            print(
+                f"[{time.monotonic() - t0:7.3f}] Assistant let go: {held} mic frames while held, "
+                f"requests #5 {fc.mic_requests}",
+                flush=True,
+            )
+            await asyncio.sleep(max(0.0, args.game - args.talk - 3))
+        else:
+            await asyncio.sleep(args.game)
         print(
             f"[{time.monotonic() - t0:7.3f}] done: {fc.motor_writes} motor writes, "
             f"{fc.watchdog_expired} watchdog stops, {fc.game_framing_errors} framing errors",
@@ -1171,5 +1190,8 @@ if __name__ == "__main__":
     ap.add_argument("--haptics-watchdog", type=float, default=5.0)
     ap.add_argument(
         "--mic-echo", action="store_true", help="send the headset audio back as the controller's microphone stream"
+    )
+    ap.add_argument(
+        "--talk", type=float, default=0.0, help="with --game: hold Assistant this many seconds (push to talk)"
     )
     sys.exit(asyncio.run(run_cli(ap.parse_args())))
