@@ -1,14 +1,18 @@
 /*
- * Stadiacast dongle, step 1: bring up the ESP32-C6 hotspot and a DNS sink on the P4.
+ * Stadiacast dongle: the ESP32-C6 hotspot, then the servers the controller talks to.
  *
- * What to expect on the serial console:
- *   - "hotspot up" with the SSID and the board's address
- *   - "station joined" with the controller's MAC when it connects
- *   - "dhcp" with the address it was given
- *   - "dns" lines with the Google names the controller asks for
- * The controller will then try HTTPS on port 443, which this step does not answer yet.
+ * What to expect on the serial console after waking the controller:
+ *   - "station joined" and "dhcp" when it connects to the hotspot
+ *   - "dns" lines with the Google names it asks for
+ *   - "https" lines for each request: generate_204, stadiaconfig, update2, the refused Clearcut
+ *     upload, FirmwareVersionCheck, RegisterController, then /gmsg polls
+ *   - "answer queued" and "GMsg #1 delivered": the controller has our WebRTC answer
+ * Step 2b adds the UDP side (ICE, DTLS), so the controller then gives up and sleeps.
  */
+#include <stdio.h>
+
 #include "dongle.h"
+#include "stadia.h"
 
 #include "esp_event.h"
 #include "esp_log.h"
@@ -31,7 +35,18 @@ void app_main(void)
 
     esp_netif_ip_info_t info;
     ESP_ERROR_CHECK(esp_netif_get_ip_info(ap, &info));
-    ESP_ERROR_CHECK(dns_sink_start(info.ip));
+    static char ip[16];
+    snprintf(ip, sizeof(ip), IPSTR, IP2STR(&info.ip));
+    stadia_config_t cfg = {
+        .advertise_ip = ip,
+        .https_port = 443,
+        .dns_port = 53,
+        .sntp_port = 123,
+        .rtc_port = 40000,
+    };
+    if (!stadia_start(&cfg)) {
+        ESP_LOGE(TAG, "a server did not start, see above");
+    }
 
     ESP_LOGI(TAG, "ready: wake the controller (about 1 s press of the Stadia button)");
 }

@@ -4,19 +4,16 @@
  * itself (connectivitycheck.gstatic.com and clients3.google.com included, which step 2 serves
  * over HTTPS with a 204 and "{}").
  */
-#include "dongle.h"
+#include "stadia_internal.h"
+#include "stadia_port.h"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <string.h>
-
-#include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "lwip/sockets.h"
+#include <sys/socket.h>
 
 static const char *TAG = "dns";
-static esp_ip4_addr_t s_ip;
-
-#define DNS_PORT 53
+static struct in_addr s_ip;
 #define TYPE_A 1
 #define TYPE_AAAA 28
 
@@ -45,17 +42,7 @@ static int read_name(const uint8_t *msg, int len, int off, char *out, size_t out
 
 static void dns_task(void *arg)
 {
-    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    struct sockaddr_in addr = {
-        .sin_family = AF_INET,
-        .sin_port = htons(DNS_PORT),
-        .sin_addr.s_addr = htonl(INADDR_ANY),
-    };
-    if (sock < 0 || bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        ESP_LOGE(TAG, "cannot bind UDP %d", DNS_PORT);
-        vTaskDelete(NULL);
-        return;
-    }
+    int sock = (int)(intptr_t)arg;
 
     uint8_t buf[512];
     char name[256];
@@ -93,18 +80,29 @@ static void dns_task(void *arg)
             };
             memcpy(buf + out, rr, sizeof(rr));
             out += sizeof(rr);
-            memcpy(buf + out, &s_ip.addr, 4); /* already network order */
+            memcpy(buf + out, &s_ip.s_addr, 4); /* already network order */
             out += 4;
             buf[7] = 1;
         }
         sendto(sock, buf, out, 0, (struct sockaddr *)&from, from_len);
-        ESP_LOGI(TAG, "%s %s from %s -> %s", qtype == TYPE_A ? "A" : qtype == TYPE_AAAA ? "AAAA" : "?",
-                 name, inet_ntoa(from.sin_addr), qtype == TYPE_A ? "board" : "empty");
+        char from_ip[16];
+        inet_ntop(AF_INET, &from.sin_addr, from_ip, sizeof(from_ip));
+        SLOGI(TAG, "%s %s from %s -> %s", qtype == TYPE_A ? "A" : qtype == TYPE_AAAA ? "AAAA" : "?",
+                 name, from_ip, qtype == TYPE_A ? "board" : "empty");
     }
 }
 
-esp_err_t dns_sink_start(esp_ip4_addr_t ip)
+bool dns_sink_start(uint16_t port, const char *answer_ip)
 {
-    s_ip = ip;
-    return xTaskCreate(dns_task, "dns_sink", 4096, NULL, 5, NULL) == pdPASS ? ESP_OK : ESP_FAIL;
+    if (inet_pton(AF_INET, answer_ip, &s_ip) != 1) {
+        return false;
+    }
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(port), .sin_addr.s_addr = htonl(INADDR_ANY)};
+    if (sock < 0 || bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        SLOGE(TAG, "cannot bind UDP %u", port);
+        return false;
+    }
+    SLOGI(TAG, "answering every name with %s on UDP %u", answer_ip, port);
+    return port_spawn(dns_task, (void *)(intptr_t)sock, "dns_sink", 4096);
 }
