@@ -21,6 +21,7 @@ typedef struct {
     bool allow_clearcut;      /* false (the live preset): refuse Clearcut with a TLS alert */
     bool mic;                 /* decode what the controller sends as media (its microphone) */
     bool mic_request;         /* ask for it: SetAudioModeRequest with f2 set (a guess, see rtc.c) */
+    bool mic_probe;           /* after READY, try the unknown display requests one by one (rtc.c) */
 } stadia_config_t;
 
 /* Start every server in its own task. False if one could not start. */

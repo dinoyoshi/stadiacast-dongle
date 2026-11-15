@@ -69,6 +69,83 @@ static struct {
     int64_t audio_at;
 } D;
 
+static void send_rpc(int kind, uint32_t ticket, int code, const char *message, const uint8_t *payload, size_t plen);
+
+/* ---- the microphone probe ----------------------------------------------------------- */
+
+/* With g_cfg.mic_probe: after READY (and the headset route), the DisplayToController requests
+ * whose use is not known go out one at a time, each with a small payload, and every answer is
+ * logged with its code and error message, which in this firmware usually names the handler. Then
+ * the other audio modes, and mode 2 again so the headphones keep working. The point is to find
+ * what makes the controller send its microphone: watch for "media from the controller" after a
+ * step. Stops when the link goes. */
+typedef struct {
+    uint8_t field;
+    uint8_t kind; /* 0 empty, 1 bool/varint field 1 = arg, 2 float 1.0, 3 string "", 4 SetAudioMode */
+    uint8_t arg;
+    const char *what;
+} probe_t;
+
+static const probe_t PROBES[] = {
+    {5, 1, 1, "request5 BoolValue(true)"},
+    {5, 1, 0, "request5 BoolValue(false)"},
+    {6, 0, 0, "request6 Empty"},
+    {7, 0, 0, "request7 Empty"},
+    {13, 1, 0, "f13 Int64Value(0)"},
+    {14, 0, 0, "request14 Empty"},
+    {17, 0, 0, "request17 Empty"},
+    {18, 2, 0, "request18 FloatValue(1.0)"},
+    {22, 1, 1, "f22 Int32Value(1)"},
+    {23, 0, 0, "f23 Empty"},
+    {10, 3, 0, "request10 String(\"\")"},
+    {11, 3, 0, "request11 String(\"\")"},
+    {16, 4, 1, "SetAudioMode(mode 1)"},
+    {16, 4, 4, "SetAudioMode(mode 4)"},
+    {16, 4, 2, "SetAudioMode(mode 2, f3) again"},
+};
+#define PROBE_START_MS 4000
+#define PROBE_STEP_MS 3000
+
+static struct {
+    int next;
+    uint32_t ticket;
+    int64_t at;
+} PR;
+
+static void probe_send(const probe_t *p)
+{
+    uint8_t inner[16], msg[24];
+    pbw_t i = PBW(inner, sizeof(inner));
+    if (p->kind == 1) pbw_uint(&i, 1, p->arg);
+    if (p->kind == 2) {
+        const uint8_t one[5] = {0x0D, 0x00, 0x00, 0x80, 0x3F}; /* field 1, fixed32, 1.0f */
+        pbw_raw(&i, one, sizeof(one));
+    }
+    if (p->kind == 3) pbw_str(&i, 1, "");
+    if (p->kind == 4) {
+        pbw_uint(&i, 1, p->arg);
+        if (p->arg == 2) pbw_uint(&i, 3, 1);
+    }
+    pbw_t m = PBW(msg, sizeof(msg));
+    pbw_bytes(&m, p->field, i.buf, i.len);
+    PR.ticket = ++D.ticket;
+    send_rpc(1, PR.ticket, 0, NULL, m.buf, m.len);
+    SLOGI(TAG, "probe %d/%d: DisplayToController #%u %s sent", PR.next + 1, (int)(sizeof(PROBES) / sizeof(PROBES[0])),
+          p->field, p->what);
+}
+
+static void probe_tick(int64_t now)
+{
+    if (!g_cfg.mic_probe || !rtc_link_up(&D.link) || !D.audio_answered || !D.ready_at) return;
+    if (PR.next >= (int)(sizeof(PROBES) / sizeof(PROBES[0]))) return;
+    if (!PR.at) PR.at = now + PROBE_START_MS;
+    if (now < PR.at) return;
+    probe_send(&PROBES[PR.next]);
+    PR.next++;
+    PR.at = now + PROBE_STEP_MS;
+    if (PR.next == (int)(sizeof(PROBES) / sizeof(PROBES[0]))) SLOGI(TAG, "probe: last step sent");
+}
+
 /* ---- display RPCs ------------------------------------------------------------------- */
 
 static void set_state(display_state_t s)
@@ -284,6 +361,18 @@ static void on_rpc(const uint8_t *data, size_t len)
         } else {
             SLOGI(TAG, "notification ControllerToDisplay #%u", (unsigned)variant.field);
         }
+    } else if (rpc.kind == 2 && PR.ticket && rpc.ticket == PR.ticket) {
+        char msg[128] = "";
+        pbf_t body;
+        pbr_t r = PBR(data, len);
+        if (pbr_next(&r, &body)) {
+            pbr_t b = PBR(body.data, body.len);
+            while (pbr_next(&b, &f)) {
+                if (f.field == 3) pbf_str(&f, msg, sizeof(msg));
+            }
+        }
+        SLOGI(TAG, "probe answer: code %u \"%s\", %u-byte payload (variant #%u)", (unsigned)rpc.code, msg,
+              (unsigned)rpc.plen, (unsigned)variant.field);
     } else if (rpc.kind == 2 && D.audio_sent && rpc.ticket == D.audio_ticket) {
         /* a repeat in the same boot is FAILED_PRECONDITION ("already in WebRTC Opus mode"): open too */
         SLOGI(TAG, "SetAudioMode%s answered: code %u%s", D.audio_f2 ? " with f2" : "", (unsigned)rpc.code,
@@ -373,6 +462,7 @@ static void display_on_connected(rtc_link_t *L)
     D.ready_at = 0;
     D.start_sent = false;
     D.audio_sent = false;
+    PR.next = 0, PR.at = 0, PR.ticket = 0;
     audio_set_route(false);
 }
 
@@ -418,6 +508,7 @@ static void display_tick(void)
     if (D.audio_sent && rtc_link_up(&D.link) && (D.audio_answered || now - D.audio_at >= AUDIO_ROUTE_WAIT_MS)) {
         audio_set_route(true);
     }
+    probe_tick(now);
     audio_tick(&D.link);
 }
 
