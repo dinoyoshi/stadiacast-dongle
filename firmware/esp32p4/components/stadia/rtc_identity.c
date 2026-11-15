@@ -19,7 +19,7 @@
 static const char *TAG = "rtc_id";
 static rtc_identity_t s_id;
 
-static void ice_string(char *out, size_t n)
+void rtc_ice_string(char *out, size_t n)
 {
     static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     uint8_t rnd[32];
@@ -32,8 +32,8 @@ static void ice_string(char *out, size_t n)
 
 bool rtc_identity_init(void)
 {
-    ice_string(s_id.ufrag, 8);
-    ice_string(s_id.pwd, 24);
+    rtc_ice_string(s_id.ufrag, 8);
+    rtc_ice_string(s_id.pwd, 24);
 
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context drbg;

@@ -42,6 +42,72 @@ static void take_candidate(const uint8_t *msg, size_t len, remote_offer_t *remot
     }
 }
 
+bool signaling_parse_offer(const uint8_t *offer, size_t len, remote_offer_t *remote, offer_echo_t *echo)
+{
+    memset(echo, 0, sizeof(*echo));
+    pbf_t f, first_video = {0};
+    pbr_t r = PBR(offer, len);
+    while (pbr_next(&r, &f)) {
+        switch (f.field) {
+        case 1: pbf_str(&f, remote->session_id, sizeof(remote->session_id)); break;
+        case 3: pbf_str(&f, remote->ufrag, sizeof(remote->ufrag)); break;
+        case 4: pbf_str(&f, remote->pwd, sizeof(remote->pwd)); break;
+        case 5: pbf_str(&f, remote->fingerprint, sizeof(remote->fingerprint)); break;
+        case 16: { /* video_format: the first H264 or VP9 one, else the first */
+            pbf_t codec;
+            if (!first_video.data) first_video = f;
+            if (!echo->video.data && pb_find(f.data, f.len, 1, &codec) &&
+                (codec.v == VIDEO_CODEC_H264 || codec.v == VIDEO_CODEC_VP9)) {
+                echo->video = f;
+            }
+            break;
+        }
+        case 17: if (!echo->audio.data) echo->audio = f; break;
+        case 21: echo->raw_dtls = f.v != 0; break;
+        case 23: echo->delayed_acks = f.v != 0; break;
+        case 25: echo->rtp_ts = f.v != 0; break;
+        }
+    }
+    if (!echo->video.data) echo->video = first_video;
+    if (!remote->ufrag[0] || !remote->pwd[0]) {
+        SLOGW(TAG, "the offer has no ICE credentials");
+        return false;
+    }
+    return true;
+}
+
+size_t signaling_build_answer(const offer_echo_t *echo, const char *ufrag, const char *pwd, uint8_t *out, size_t cap)
+{
+    /* RtcSdpAnswer, fields in number order as the Python receiver serializes it.
+     * --boreal off (the live preset): no use_boreal. */
+    pbw_t a = PBW(out, cap);
+    pbw_str(&a, 1, ufrag);
+    pbw_str(&a, 2, pwd);
+    pbw_str(&a, 3, rtc_identity()->fingerprint);
+    if (echo->video.data) pbw_bytes(&a, 8, echo->video.data, echo->video.len);
+    if (echo->audio.data) pbw_bytes(&a, 9, echo->audio.data, echo->audio.len);
+    pbw_uint(&a, 10, echo->raw_dtls);
+    pbw_uint(&a, 11, echo->delayed_acks);
+    pbw_uint(&a, 12, 1); /* disable_game_stats */
+    pbw_uint(&a, 13, 1); /* disable_frame_tokens */
+    pbw_str(&a, 14, STADIA_SERVER_NAME "/" STADIA_VERSION);
+    pbw_uint(&a, 15, NETWORK_TYPE_ETHERNET);
+    pbw_uint(&a, 17, echo->rtp_ts);
+    return a.overflow ? 0 : a.len;
+}
+
+size_t signaling_build_candidate(uint16_t port, uint8_t *out, size_t cap)
+{
+    pbw_t c = PBW(out, cap); /* RtcIceCandidate: our one host candidate */
+    pbw_str(&c, 1, "0");
+    pbw_uint(&c, 2, 0);
+    pbw_str(&c, 3, "1");
+    pbw_uint(&c, 4, HOST_CANDIDATE_PRIORITY);
+    pbw_str(&c, 5, g_cfg.advertise_ip);
+    pbw_uint(&c, 6, port);
+    return c.overflow ? 0 : c.len;
+}
+
 size_t signaling_answer(const uint8_t *bundle, size_t len, remote_offer_t *remote, uint8_t *out, size_t out_cap)
 {
     memset(remote, 0, sizeof(*remote));
@@ -62,81 +128,30 @@ size_t signaling_answer(const uint8_t *bundle, size_t len, remote_offer_t *remot
         SLOGW(TAG, "the bundle carries no SDP offer");
         return 0;
     }
-
-    /* What the answer echoes from the offer. */
-    bool raw_dtls = false, delayed_acks = false, rtp_ts = false;
-    pbf_t video = {0}, first_video = {0}, audio = {0};
-    r = PBR(offer.data, offer.len);
-    while (pbr_next(&r, &f)) {
-        switch (f.field) {
-        case 1: pbf_str(&f, remote->session_id, sizeof(remote->session_id)); break;
-        case 3: pbf_str(&f, remote->ufrag, sizeof(remote->ufrag)); break;
-        case 4: pbf_str(&f, remote->pwd, sizeof(remote->pwd)); break;
-        case 5: pbf_str(&f, remote->fingerprint, sizeof(remote->fingerprint)); break;
-        case 16: { /* video_format: the first H264 or VP9 one, else the first */
-            pbf_t codec;
-            if (!first_video.data) first_video = f;
-            if (!video.data && pb_find(f.data, f.len, 1, &codec) &&
-                (codec.v == VIDEO_CODEC_H264 || codec.v == VIDEO_CODEC_VP9)) {
-                video = f;
-            }
-            break;
-        }
-        case 17: if (!audio.data) audio = f; break;
-        case 21: raw_dtls = f.v != 0; break;
-        case 23: delayed_acks = f.v != 0; break;
-        case 25: rtp_ts = f.v != 0; break;
-        }
-    }
-    if (!video.data) video = first_video;
-    if (!remote->ufrag[0] || !remote->pwd[0]) {
-        SLOGW(TAG, "the offer has no ICE credentials");
-        return 0;
-    }
+    offer_echo_t echo;
+    if (!signaling_parse_offer(offer.data, offer.len, remote, &echo)) return 0;
 
     const rtc_identity_t *id = rtc_identity();
     uint8_t ans_buf[1024], sdp_buf[1100], cand_buf[96], cmsg_buf[128];
-
-    /* RtcSdpAnswer, fields in number order as the Python receiver serializes it.
-     * --boreal off (the live preset): no use_boreal. */
-    pbw_t a = PBW(ans_buf, sizeof(ans_buf));
-    pbw_str(&a, 1, id->ufrag);
-    pbw_str(&a, 2, id->pwd);
-    pbw_str(&a, 3, id->fingerprint);
-    if (video.data) pbw_bytes(&a, 8, video.data, video.len);
-    if (audio.data) pbw_bytes(&a, 9, audio.data, audio.len);
-    pbw_uint(&a, 10, raw_dtls);
-    pbw_uint(&a, 11, delayed_acks);
-    pbw_uint(&a, 12, 1); /* disable_game_stats */
-    pbw_uint(&a, 13, 1); /* disable_frame_tokens */
-    pbw_str(&a, 14, STADIA_SERVER_NAME "/" STADIA_VERSION);
-    pbw_uint(&a, 15, NETWORK_TYPE_ETHERNET);
-    pbw_uint(&a, 17, rtp_ts);
+    size_t alen = signaling_build_answer(&echo, id->ufrag, id->pwd, ans_buf, sizeof(ans_buf));
+    size_t clen = signaling_build_candidate(g_cfg.rtc_port, cand_buf, sizeof(cand_buf));
 
     pbw_t s = PBW(sdp_buf, sizeof(sdp_buf)); /* WebRtcSdp{SDP_ANSWER} */
     pbw_uint(&s, 1, SDP_ANSWER);
-    pbw_bytes(&s, 4, a.buf, a.len);
-
-    pbw_t c = PBW(cand_buf, sizeof(cand_buf)); /* RtcIceCandidate: our one host candidate */
-    pbw_str(&c, 1, "0");
-    pbw_uint(&c, 2, 0);
-    pbw_str(&c, 3, "1");
-    pbw_uint(&c, 4, HOST_CANDIDATE_PRIORITY);
-    pbw_str(&c, 5, g_cfg.advertise_ip);
-    pbw_uint(&c, 6, g_cfg.rtc_port);
+    pbw_bytes(&s, 4, ans_buf, alen);
 
     pbw_t cm = PBW(cmsg_buf, sizeof(cmsg_buf)); /* WebRtcSdp{ICE_CANDIDATE} */
     pbw_uint(&cm, 1, ICE_CANDIDATE);
-    pbw_bytes(&cm, 5, c.buf, c.len);
+    pbw_bytes(&cm, 5, cand_buf, clen);
 
     pbw_t o = PBW(out, out_cap); /* WebRtcSdpAndIceCandidates */
     pbw_bytes(&o, 1, s.buf, s.len);
     pbw_bytes(&o, 2, cm.buf, cm.len);
-    if (a.overflow || s.overflow || c.overflow || cm.overflow || o.overflow) {
+    if (!alen || !clen || s.overflow || cm.overflow || o.overflow) {
         SLOGE(TAG, "answer does not fit");
         return 0;
     }
     SLOGI(TAG, "offer %s: raw_dtls=%d delayed_acks=%d, %d IPv4 candidate(s); answering with %s:%u", remote->session_id,
-          raw_dtls, delayed_acks, remote->candidates, g_cfg.advertise_ip, g_cfg.rtc_port);
+          echo.raw_dtls, echo.delayed_acks, remote->candidates, g_cfg.advertise_ip, (unsigned)g_cfg.rtc_port);
     return o.len;
 }

@@ -7,3 +7,6 @@ dependencies:
     version: "~1.6.5"
   espressif/esp_hosted:
     version: "~2.13.1"
+  ## TinyUSB for the USB gamepad (components/usb_pad) on the P4's high-speed USB-C port.
+  espressif/esp_tinyusb:
+    version: "^3.0.0"

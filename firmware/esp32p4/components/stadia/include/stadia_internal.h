@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "stadia.h"
+#include "stadia_pb.h"
 
 #define STADIA_SERVER_NAME "stadia-local-receiver"
 #define STADIA_VERSION "1.2.0-esp32p4"
@@ -55,6 +56,19 @@ typedef struct {
     uint16_t cand_port[4];
 } remote_offer_t;
 
+/* What an answer echoes from the offer (pointers into the offer's buffer). */
+typedef struct {
+    bool raw_dtls, delayed_acks, rtp_ts;
+    pbf_t video, audio;
+} offer_echo_t;
+
+/* An RtcSdpOffer: the remote credentials into `remote`, what the answer echoes into `echo`. */
+bool signaling_parse_offer(const uint8_t *offer, size_t len, remote_offer_t *remote, offer_echo_t *echo);
+/* Our RtcSdpAnswer with these ICE credentials and rtc_identity()'s fingerprint. 0 if it does not fit. */
+size_t signaling_build_answer(const offer_echo_t *echo, const char *ufrag, const char *pwd, uint8_t *out, size_t cap);
+/* Our RtcIceCandidate: advertise_ip and `port`. */
+size_t signaling_build_candidate(uint16_t port, uint8_t *out, size_t cap);
+
 /* Parse a WebRtcSdpAndIceCandidates offer bundle and build our answer bundle into `out`.
  * Returns the answer's length, 0 on failure. */
 size_t signaling_answer(const uint8_t *offer_bundle, size_t len, remote_offer_t *remote, uint8_t *out, size_t out_cap);
@@ -74,10 +88,13 @@ typedef struct {
 bool rtc_identity_init(void);
 const rtc_identity_t *rtc_identity(void);
 
-/* ---- the display link on UDP (rtc.c) ---------------------------------------------- */
+/* Random ICE string (letters and digits) of n characters into out[n + 1]. */
+void rtc_ice_string(char *out, size_t n);
 
-bool rtc_start(uint16_t port);
-/* A new offer: reset the link and start ICE towards its candidates. */
+/* ---- the display link and the game session on UDP (rtc.c, game.c) ------------------ */
+
+bool rtc_start(uint16_t display_port, uint16_t game_port);
+/* A new offer on the display link: reset it and start ICE towards its candidates. */
 void rtc_set_remote(const remote_offer_t *remote);
 
 /* ---- small UDP servers ------------------------------------------------------------- */
