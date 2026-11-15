@@ -22,6 +22,7 @@
 #include "stadia_port.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -430,7 +431,14 @@ static void poll_socket(rtc_link_t *L, uint8_t *buf, size_t cap)
 
 static void rtc_task(void *arg)
 {
-    static uint8_t buf[1600];
+    /* From the heap: .bss on v1.x P4 chips comes out of the small RAM pool the system starts
+     * from (see c6_update.c), and the microphone's additions had used up what was left. */
+    const size_t cap = 1600;
+    uint8_t *buf = malloc(cap);
+    if (!buf) {
+        SLOGE(TAG, "no memory for the rtc task");
+        return;
+    }
     rtc_link_t *G = game_link();
     for (;;) {
         fd_set fds;
@@ -440,8 +448,8 @@ static void rtc_task(void *arg)
         int maxfd = D.link.sock > G->sock ? D.link.sock : G->sock;
         struct timeval tv = {.tv_sec = 0, .tv_usec = audio_poll_ms() * 1000};
         int r = select(maxfd + 1, &fds, NULL, NULL, &tv);
-        if (r > 0 && FD_ISSET(D.link.sock, &fds)) poll_socket(&D.link, buf, sizeof(buf));
-        if (r > 0 && FD_ISSET(G->sock, &fds)) poll_socket(G, buf, sizeof(buf));
+        if (r > 0 && FD_ISSET(D.link.sock, &fds)) poll_socket(&D.link, buf, cap);
+        if (r > 0 && FD_ISSET(G->sock, &fds)) poll_socket(G, buf, cap);
         display_tick();
         game_tick();
     }

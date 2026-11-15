@@ -187,21 +187,30 @@ static void stats(void)
 
 static void mic_task(void *arg)
 {
-    static pkt_t p;
-    static int16_t pcm[MAX_FRAME];
+    /* On the heap, not in .bss: on v1.x P4 chips .bss comes out of the small RAM pool the system
+     * starts from, and these 13 KB there stopped the board booting (see c6_update.c). */
+    pkt_t *pp = malloc(sizeof(pkt_t));
+    int16_t *pcm = malloc(MAX_FRAME * sizeof(int16_t));
+    if (!pp || !pcm) {
+        SLOGE(TAG, "no memory for the microphone decoder");
+        free(pp);
+        free(pcm);
+        return;
+    }
+    pkt_t *p = pp;
     for (;;) {
         port_event_wait(M.ev, 1000);
         for (;;) {
             port_lock();
             bool have = M.count > 0;
             if (have) {
-                p = M.q[M.head];
+                *p = M.q[M.head];
                 M.head = (M.head + 1) % QUEUE_LEN;
                 M.count--;
             }
             port_unlock();
             if (!have) break;
-            decode(&p, pcm);
+            decode(p, pcm);
         }
         stats();
     }
