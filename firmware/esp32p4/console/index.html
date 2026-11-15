@@ -127,6 +127,7 @@ dl.kv dd .sub { color: var(--text-3); font-weight: 400; }
 .settings { display: grid; gap: 14px; }
 .setting { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; }
 .setting label { font-weight: 600; }
+.setting.stack { grid-template-columns: 1fr; gap: 6px; }
 .setting .help { grid-column: 1 / -1; color: var(--text-3); font-size: 12.5px; }
 .setting input[type=range] { width: 160px; accent-color: var(--accent); }
 .setting output { font-variant-numeric: tabular-nums; min-width: 52px; display: inline-block; text-align: right; }
@@ -261,7 +262,7 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
       <section class="card">
         <h2>Settings</h2>
         <div class="settings">
-          <div class="setting">
+          <div class="setting stack">
             <label>Gamepad mode</label>
             <div class="seg" id="setMode" role="group" aria-label="Gamepad mode"></div>
             <div class="help">The dongle leaves USB and comes back as the new controller. Saved.</div>
