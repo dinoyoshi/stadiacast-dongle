@@ -1,0 +1,8 @@
+# Name,   Type, SubType, Offset,   Size
+# nvs and phy_init stay where the single-app layout of steps 1-4 had them.
+nvs,      data, nvs,     0x9000,   24K,
+phy_init, data, phy,     0xf000,   4K,
+factory,  app,  factory, 0x10000,  3M,
+# The C6's ESP-Hosted firmware (c6_fw/network_adapter.bin), which main/c6_update.c installs on
+# the C6 when it runs another version.
+c6_fw,    data, 0x40,    0x310000, 2M,

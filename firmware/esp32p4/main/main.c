@@ -86,6 +86,7 @@ void app_main(void)
     }
     stadia_set_pad_callback(on_pad, NULL);
 
+    c6_update_if_needed();
     esp_netif_t *ap = hotspot_start();
 
     esp_netif_ip_info_t info;
