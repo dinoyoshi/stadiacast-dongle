@@ -134,7 +134,15 @@ audio: 500 frames sent in 10 s (160 B avg), 0 not sent, 0 trimmed, 0 underruns, 
 The frames are encoded at the USB host's pace and sent on the board's own 20 ms grid, as
 audio.py's pacer does; a pause leaves a gap of the same length in the RTP timestamps. The hotspot
 runs with a DTIM period of 1, so frames for a dozing controller are not held back. On Linux,
-set the "Xbox 360 Controller" output to 100%: its volume is applied on the board.
+set the dongle's output to 100%: its volume is applied on the board.
+
+In Xbox 360 mode with the headphones on, the dongle is **1209:0001** rather than 045E:028E.
+Windows' Xbox driver (xusb22) claims 045E:028E for the whole device, which left the headphones
+without a driver on Windows. With another ID, Windows' composite driver splits the device: the
+gamepad interface still gets the Xbox driver (XInput), through the `XUSB10` compatible ID in a
+Microsoft OS 2.0 descriptor, and the headphones get the USB Audio 2.0 driver. Linux's xpad drives
+1209 XInput pads too (kernel 5.12+). With the headphones turned off in menuconfig the dongle stays
+045E:028E.
 
 ## Updating the C6 (Wi-Fi) firmware
 
@@ -186,7 +194,7 @@ board's LED blinks the mode number, and the board remembers the choice for the n
 
 | combo | mode | for | rumble | headphones |
 |---|---|---|---|---|
-| Stadia + A | Xbox 360 (045E:028E, XInput), the default | Windows, Linux, SteamOS, Android | yes | yes |
+| Stadia + A | Xbox 360 (XInput; 045E:028E, or 1209:0001 with the headphones), the default | Windows, Linux, SteamOS, Android | yes | yes |
 | Stadia + B | DualShock 4 (054C:09CC) | PC games and Steam with PlayStation prompts; not a real PS4, which checks for Sony hardware | yes | yes |
 | Stadia + X | Switch Pro Controller (057E:2009) | Nintendo Switch (wired), Steam, Linux | yes | no |
 | Stadia + Y | HID gamepad | macOS, Android, older DirectInput games | no | yes |
