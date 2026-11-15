@@ -1,0 +1,15 @@
+# Turn the built-in credential's PEM files into C strings (builtin_cred.h in the build tree).
+# Used by both the ESP-IDF component and the host test build.
+function(stadia_embed_certs src_dir out_dir)
+    set(content "/* Generated from the certs directory by embed_certs.cmake */\n#pragma once\n")
+    foreach(pair "BUILTIN_CHAIN_PEM;builtin_chain.pem" "BUILTIN_KEY_PEM;builtin_key.pem")
+        list(GET pair 0 sym)
+        list(GET pair 1 file)
+        file(READ "${src_dir}/${file}" pem)
+        string(REPLACE "\n" "\\n\"\n\"" pem "${pem}")
+        string(APPEND content "static const char ${sym}[] = \"${pem}\";\n")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${src_dir}/${file}")
+    endforeach()
+    file(MAKE_DIRECTORY "${out_dir}")
+    file(WRITE "${out_dir}/builtin_cred.h" "${content}")
+endfunction()

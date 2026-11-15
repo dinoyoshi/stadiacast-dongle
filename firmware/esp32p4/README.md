@@ -8,7 +8,8 @@ The Python code at the top of this repository stays as the reference implementat
 | step | what | status |
 |---|---|---|
 | 1 | PC baseline ([docs/step1-baseline.md](docs/step1-baseline.md)) and the C6 hotspot with a DNS sink | done: tested on the board, the controller joins and resolves through it |
-| 2 | HTTPS endpoints, GMsg, STUN/DTLS up to READY: input on the serial log | next |
+| 2a | HTTPS with the built-in certificate, the boot endpoints, discovery RPCs and GMsg: the controller receives our WebRTC answer | this build |
+| 2b | STUN/DTLS on UDP 40000, display RPCs up to READY: input on the serial log | next |
 | 3 | USB gamepad (Xbox 360 style) and rumble | |
 | 4 | USB sound card feeding the controller's headset jack | |
 
@@ -48,6 +49,34 @@ Each step also comes as one ready-made image, `stadiacast-dongle-step1.bin`. Fla
 with `esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle-step1.bin`, or in the browser with
 [ESP Web Tool](https://espressif.github.io/esptool-js/) (address 0x0, Chrome or Edge).
 Then watch the log with any serial monitor at 115200 baud.
+
+## What step 2a should print
+
+After waking the controller, beyond the step 1 lines:
+
+```
+https: GET connectivitycheck.gstatic.com/generate_204 -> 204 netcheck
+https: 192.168.4.2: refused the Clearcut upload (TLS alert handshake_failure)
+https: POST cloudcast-pa.googleapis.com/v1:FirmwareVersionCheck -> 200
+receiver: RegisterController from <id> (attempt ...) with a resumed discovery and offer
+signaling: offer ...: raw_dtls=1 delayed_acks=1, 1 IPv4 candidate(s); answering with 192.168.4.1:40000
+receiver: GMsg #1 delivered to stadia-local-receiver-display-0
+receiver: GMsg #1 acked
+```
+
+The controller then tries ICE on UDP 40000, which step 2b answers.
+
+## Testing on a PC
+
+`components/stadia/` is plain C on BSD sockets and mbedTLS, so it also builds for Linux and
+runs against the Python fake controller in `tests/fake_controller.py`:
+
+```sh
+cmake -S host_test -B build-host -DMBEDTLS_DIR=$IDF_PATH/components/mbedtls/mbedtls
+cmake --build build-host
+STADIA_ALLOW_CLEARCUT=1 build-host/stadia_host 127.0.0.1 8443 40000 &
+uv run tests/fake_controller.py --host 127.0.0.1 --https-port 8443   # from the repository root
+```
 
 ## If the Wi-Fi doesn't come up
 
