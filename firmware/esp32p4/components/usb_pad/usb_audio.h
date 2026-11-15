@@ -9,7 +9,13 @@
 #include "class/audio/audio.h"
 
 #define USB_AUDIO_EP_OUT 0x02
-#define USB_AUDIO_EP_SIZE 196 /* 49 frames of 4 bytes: one 1 ms packet with room for a spare frame */
+/* One packet per (micro)frame: 48 + 1 frames of 4 bytes per 1 ms at full speed, 6 + 1 per 125 us
+ * microframe at high speed. bInterval is 1 at both speeds: the DWC2 core arms an iso OUT
+ * transfer for the next microframe's parity, so a packet every 8 microframes (bInterval 4)
+ * lands on the other parity half the time and never completes. */
+#define USB_AUDIO_EP_SIZE_FS 196
+#define USB_AUDIO_EP_SIZE_HS 28
+#define USB_AUDIO_EP_SIZE USB_AUDIO_EP_SIZE_FS /* the buffer: the larger of the two */
 #define USB_AUDIO_STRING 4    /* "Controller headset" */
 
 /* entities */
@@ -28,8 +34,7 @@
      TUD_AUDIO20_DESC_STD_AS_LEN * 2 + TUD_AUDIO20_DESC_CS_AS_INT_LEN + TUD_AUDIO20_DESC_TYPE_I_FORMAT_LEN +          \
      TUD_AUDIO20_DESC_STD_AS_ISO_EP_LEN + TUD_AUDIO20_DESC_CS_AS_ISO_EP_LEN)
 
-/* bInterval: 1 ms either way (full speed in frames, high speed as 2^(n-1) microframes). */
-#define USB_AUDIO_DESC(_itf, _interval)                                                                               \
+#define USB_AUDIO_DESC(_itf, _epsize)                                                                               \
     TUD_AUDIO20_DESC_IAD(_itf, 2, 0),                                                                                 \
     TUD_AUDIO20_DESC_STD_AC(_itf, 0, USB_AUDIO_STRING),                                                               \
     TUD_AUDIO20_DESC_CS_AC(0x0200, AUDIO20_FUNC_HEADSET, UAC_AC_BODY_LEN, 0),                                         \
@@ -47,7 +52,7 @@
     TUD_AUDIO20_DESC_TYPE_I_FORMAT(2, 16),                                                                            \
     TUD_AUDIO20_DESC_STD_AS_ISO_EP(USB_AUDIO_EP_OUT,                                                                  \
                                    (uint8_t)(TUSB_XFER_ISOCHRONOUS | TUSB_ISO_EP_ATT_ADAPTIVE | TUSB_ISO_EP_ATT_DATA), \
-                                   USB_AUDIO_EP_SIZE, _interval),                                                     \
+                                   _epsize, 1),                                                     \
     TUD_AUDIO20_DESC_CS_AS_ISO_EP(AUDIO20_CS_AS_ISO_DATA_EP_ATT_NON_MAX_PACKETS_OK, AUDIO20_CTRL_NONE,                \
                                   AUDIO20_CS_AS_ISO_DATA_EP_LOCK_DELAY_UNIT_UNDEFINED, 0)
 

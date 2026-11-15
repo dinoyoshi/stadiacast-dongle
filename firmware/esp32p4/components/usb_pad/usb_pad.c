@@ -109,8 +109,8 @@ static const tusb_desc_device_qualifier_t s_qualifier = {
 
 static const uint8_t s_config_fs[] = {CONFIG_HEADER(XINPUT_CONFIG_LEN, 1), XINPUT_ITF(1, 8)};
 static const uint8_t s_config_hs[] = {CONFIG_HEADER(XINPUT_CONFIG_LEN, 1), XINPUT_ITF(4, 7)};
-static const uint8_t s_config_audio_fs[] = {CONFIG_HEADER(AUDIO_CONFIG_LEN, 3), XINPUT_ITF(1, 8), USB_AUDIO_DESC(1, 1)};
-static const uint8_t s_config_audio_hs[] = {CONFIG_HEADER(AUDIO_CONFIG_LEN, 3), XINPUT_ITF(4, 7), USB_AUDIO_DESC(1, 4)};
+static const uint8_t s_config_audio_fs[] = {CONFIG_HEADER(AUDIO_CONFIG_LEN, 3), XINPUT_ITF(1, 8), USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_FS)};
+static const uint8_t s_config_audio_hs[] = {CONFIG_HEADER(AUDIO_CONFIG_LEN, 3), XINPUT_ITF(4, 7), USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_HS)};
 _Static_assert(sizeof(s_config_fs) == XINPUT_CONFIG_LEN, "gamepad configuration length");
 _Static_assert(sizeof(s_config_audio_hs) == AUDIO_CONFIG_LEN, "composite configuration length");
 

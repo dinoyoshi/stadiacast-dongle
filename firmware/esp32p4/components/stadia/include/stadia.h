@@ -17,7 +17,7 @@ typedef struct {
     uint16_t game_port;       /* 40001: the game session's UDP port */
     bool start_game;          /* send StartGame once READY: the game session carries input and rumble */
     bool audio;               /* open the headset audio route at READY (SetAudioModeRequest mode 2) */
-    uint8_t audio_complexity; /* Opus complexity 1..10; 0 = 5 */
+    uint8_t audio_complexity; /* Opus complexity 1..10; 0 = 8 */
     bool allow_clearcut;      /* false (the live preset): refuse Clearcut with a TLS alert */
 } stadia_config_t;
 

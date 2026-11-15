@@ -28,7 +28,7 @@ config DONGLE_USB_AUDIO
 config DONGLE_OPUS_COMPLEXITY
     int "Opus encoder complexity"
     range 1 10
-    default 5
+    default 8
     depends on DONGLE_USB_AUDIO
     help
         Higher is better sound for more CPU time per 20 ms frame. The serial log prints the

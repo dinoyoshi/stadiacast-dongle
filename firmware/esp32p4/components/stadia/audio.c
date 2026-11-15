@@ -12,6 +12,10 @@
  * The frames follow the producer's clock, which on the board is the USB host's: one frame per
  * 20 ms of audio it played. A pause (the host stopped streaming) leaves a hole in the timestamps
  * of the length it lasted, so the controller's jitter buffer stays on the same grid.
+ *
+ * The rtc task sends them on a 20 ms grid of its own (audio.py's pacer), PACE_HEADROOM_US behind
+ * the first frame, so the encoder's 5-11 ms of jitter does not reach the air. A slot with no
+ * frame is skipped (an underrun); more than 10 slots behind restarts the grid.
  */
 #include "stadia_internal.h"
 
@@ -26,12 +30,14 @@ static const char *TAG = "audio";
 
 #define FRAME_SAMPLES 960 /* 20 ms at 48 kHz */
 #define CHANNELS 2
-#define BITRATE 64000
+#define BITRATE 96000
 #define PAYLOAD_TYPE 111
-#define MAX_OPUS 400
+#define MAX_OPUS 600
 #define QUEUE_LEN 6    /* 120 ms: past it the oldest frame goes, as in audio.py */
 #define GAP_US 100000  /* a pause longer than this resyncs the timestamps to the wall clock */
 #define STATS_MS 10000
+#define SLOT_US 20000
+#define PACE_HEADROOM_US 15000
 
 typedef struct {
     uint16_t len;
@@ -58,13 +64,14 @@ static struct {
     volatile bool route; /* frames are wanted (the controller's audio route is open) */
     uint16_t seq;
     uint32_t ssrc;
-    uint32_t sent, dropped;
+    uint32_t sent, dropped, underruns, resyncs;
     int64_t stats_at;
+    int64_t next_slot_us; /* the pacer's next send time, 0 = waiting for a first frame */
 } A;
 
 void audio_init(const stadia_config_t *cfg)
 {
-    A.complexity = cfg->audio_complexity ? cfg->audio_complexity : 5;
+    A.complexity = cfg->audio_complexity ? cfg->audio_complexity : 8;
     uint8_t r[4];
     port_random(r, sizeof(r));
     A.ssrc = 0x51A00000u | (uint32_t)(r[0] << 8 | r[1]); /* its own SSRC, not the input ACKs' */
@@ -75,13 +82,18 @@ static bool encoder_ready(void)
 {
     if (A.enc) return true;
     if (A.enc_failed) return false;
-    int err = 0;
-    A.enc = opus_encoder_create(48000, CHANNELS, OPUS_APPLICATION_RESTRICTED_LOWDELAY, &err);
-    if (!A.enc) {
+    /* the encoder's state in internal RAM: from PSRAM, encoding takes noticeably longer */
+    int size = opus_encoder_get_size(CHANNELS);
+    OpusEncoder *enc = port_alloc_fast((size_t)size);
+    if (!enc) enc = malloc((size_t)size);
+    int err = enc ? opus_encoder_init(enc, 48000, CHANNELS, OPUS_APPLICATION_RESTRICTED_LOWDELAY) : OPUS_ALLOC_FAIL;
+    if (err != OPUS_OK) {
         SLOGE(TAG, "Opus encoder: %s", opus_strerror(err));
+        free(enc);
         A.enc_failed = true;
         return false;
     }
+    A.enc = enc;
     opus_encoder_ctl(A.enc, OPUS_SET_BITRATE(BITRATE));
     opus_encoder_ctl(A.enc, OPUS_SET_COMPLEXITY(A.complexity));
     SLOGI(TAG, "Opus %s: 48 kHz stereo, 20 ms, %d kbps, complexity %d, %d bytes of state", opus_get_version_string(),
@@ -160,17 +172,45 @@ void audio_set_route(bool open)
         port_lock();
         A.count = 0;
         port_unlock();
+        A.next_slot_us = 0;
     }
 }
 
 int audio_poll_ms(void)
 {
-    return A.route && port_now_ms() - A.last_queued_ms < 1000 ? 3 : 20;
+    return A.route && port_now_ms() - A.last_queued_ms < 1000 ? 2 : 20;
+}
+
+/* Whether a frame is due now: the 20 ms grid, started PACE_HEADROOM_US after the first frame. */
+static bool slot_due(void)
+{
+    int64_t now = port_now_us();
+    port_lock();
+    int count = A.count;
+    port_unlock();
+    if (!A.next_slot_us) {
+        if (!count) return false;
+        A.next_slot_us = now + PACE_HEADROOM_US;
+        return false;
+    }
+    if (now < A.next_slot_us) return false;
+    if (now - A.next_slot_us > 10 * SLOT_US) { /* a stall: start a new grid rather than burst */
+        A.resyncs++;
+        A.next_slot_us = count ? now + PACE_HEADROOM_US : 0;
+        return false;
+    }
+    A.next_slot_us += SLOT_US;
+    if (!count) {
+        A.underruns++;
+        if (port_now_ms() - A.last_queued_ms > 200) A.next_slot_us = 0; /* the stream stopped */
+        return false;
+    }
+    return true;
 }
 
 void audio_tick(rtc_link_t *L)
 {
-    for (;;) {
+    while (slot_due()) {
         frame_t f;
         port_lock();
         bool have = A.count > 0;
@@ -208,11 +248,14 @@ void audio_tick(rtc_link_t *L)
         A.encoded = A.trimmed = A.enc_us_sum = A.enc_us_max = A.bytes = 0;
         port_unlock();
         if (enc || A.sent || A.dropped) {
-            SLOGI(TAG, "%u frames sent in %d s (%u B avg), %u not sent, %u trimmed; encode avg %u us, max %u us",
+            SLOGI(TAG,
+                  "%u frames sent in %d s (%u B avg), %u not sent, %u trimmed, %u underruns, %u resyncs; "
+                  "encode avg %u us, max %u us",
                   (unsigned)A.sent, (int)((now - A.stats_at) / 1000), (unsigned)(enc ? bytes / enc : 0),
-                  (unsigned)A.dropped, (unsigned)trimmed, (unsigned)(enc ? sum / enc : 0), (unsigned)max);
+                  (unsigned)A.dropped, (unsigned)trimmed, (unsigned)A.underruns, (unsigned)A.resyncs,
+                  (unsigned)(enc ? sum / enc : 0), (unsigned)max);
         }
-        A.sent = A.dropped = 0;
+        A.sent = A.dropped = A.underruns = A.resyncs = 0;
         A.stats_at = now;
     }
 }
