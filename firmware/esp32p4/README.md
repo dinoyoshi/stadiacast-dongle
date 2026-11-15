@@ -11,7 +11,7 @@ The Python code at the top of this repository stays as the reference implementat
 | 2a | HTTPS with the built-in certificate, the boot endpoints, discovery RPCs and GMsg: the controller receives our WebRTC answer | done: tested on the board |
 | 2b | STUN/DTLS on UDP 40000, display RPCs up to READY: input on the serial log | done: tested on the board, button names match |
 | 3 | StartGame and the game session on UDP 40001; a USB Xbox 360 controller with rumble | done: tested on the board with Linux (xpad): all inputs, rumble held 8 s |
-| 4 | USB headphones feeding the controller's headset jack (Opus over SRTP) | built, tested on a PC against the fake controller; board test next |
+| 4 | USB headphones feeding the controller's headset jack (Opus over SRTP) | done: tested on the board with Linux (PipeWire): music plays in the controller's headset |
 
 ## Build and flash
 
@@ -128,12 +128,13 @@ rtc: SetAudioMode answered: code 0
 audio: headset audio route open: sending
 usb_audio: the host started playing
 audio: Opus libopus 1.5.2-fixed: 48 kHz stereo, 20 ms, 64 kbps, complexity 5, ... bytes of state
-audio: 500 frames sent in 10 s (160 B avg), 0 not sent, 0 trimmed; encode avg ... us, max ... us
+audio: 500 frames sent in 10 s (160 B avg), 0 not sent, 0 trimmed, 0 underruns, 0 resyncs; encode avg ... us, max ... us
 ```
 
-The frames follow the USB host's clock (one per 20 ms it plays); a pause leaves a gap of the same
-length in the RTP timestamps, as audio.py's pacer does. The hotspot is not changed for audio yet:
-if it stutters, the first thing to try is a DTIM period of 1 on the C6 SoftAP.
+The frames are encoded at the USB host's pace and sent on the board's own 20 ms grid, as
+audio.py's pacer does; a pause leaves a gap of the same length in the RTP timestamps. The hotspot
+runs with a DTIM period of 1, so frames for a dozing controller are not held back. On Linux,
+set the "Xbox 360 Controller" output to 100%: its volume is applied on the board.
 
 ## Testing on a PC
 
