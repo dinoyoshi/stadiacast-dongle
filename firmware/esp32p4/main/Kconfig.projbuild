@@ -34,6 +34,15 @@ config DONGLE_OPUS_COMPLEXITY
         Higher is better sound for more CPU time per 20 ms frame. The serial log prints the
         encode time every 10 s while audio plays.
 
+config DONGLE_PAD_MODE
+    int "Gamepad mode at first power-up (0 Xbox 360, 1 DualShock 4, 2 Switch Pro, 3 HID)"
+    range 0 3
+    default 0
+    help
+        The mode the board starts in until one is picked on the controller: hold the Stadia
+        button with A (Xbox 360), B (DualShock 4), X (Switch Pro) or Y (HID gamepad) for 1.5 s.
+        The board remembers the last one picked.
+
 config DONGLE_STATUS_LED_GPIO
     int "Status LED GPIO (-1 for none)"
     range -1 54
