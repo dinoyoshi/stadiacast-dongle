@@ -20,7 +20,7 @@ OTG port, as four kinds of controller, on Linux and Windows.
 | Controller modes: Xbox 360, DualShock 4, Switch Pro, HID | done | Linux; Steam sees DS4 as a PS4 controller |
 | C6 ESP-Hosted update from the P4 | done | board: 2.12.11 to 2.13.1 |
 | Headset microphone (the controller's headset as the PC's USB microphone) | done | Linux (PipeWire): voice recorded, no clipping, 0 packets lost |
-| Push to talk on the Assistant button | built | host build vs the fake controller; board test pending |
+| Push to talk on the Assistant button | done | board: sound 15-50 ms after the press, stops 0.3 s after release; headphone underruns about 0 per 10 s while the mic is idle |
 
 Test rig: FireBeetle 2 ESP32-P4 with a v1.3 P4, C6 on ESP-Hosted 2.13.1, a Stadia Controller on
 Wi-Fi firmware build 316382, a Linux PC and a Windows PC.
@@ -71,7 +71,7 @@ All merged into `main`.
 - Slight clipping on some loud songs. Likely fix: a few dB of headroom before the Opus encoder.
 - DualShock 4 and Switch Pro rumble, and Switch Pro mode on a real Switch, are untested.
 - One controller at a time.
-- With the microphone on, the headphones' stream has 3 to 6 underruns per 10 s (0 to 1 without).
+- While Assistant is held (the microphone running), the headphones' stream has 1 to 3 underruns per 10 s (about 0 otherwise).
 
 ## Next
 
