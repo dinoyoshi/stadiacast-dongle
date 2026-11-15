@@ -90,7 +90,6 @@ int main(int argc, char **argv)
         .allow_clearcut = getenv("STADIA_ALLOW_CLEARCUT") != NULL,
         .audio = getenv("STADIA_AUDIO") != NULL,
         .mic = getenv("STADIA_MIC") != NULL,
-        .mic_probe = getenv("STADIA_MIC_PROBE") != NULL,
     };
     stadia_set_pad_callback(on_pad, NULL);
     stadia_set_mic_callback(on_mic, NULL);

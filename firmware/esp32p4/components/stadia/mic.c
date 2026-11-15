@@ -1,14 +1,11 @@
 /*
  * The controller's microphone: what it sends as media, decoded for the USB microphone.
  *
- * Nothing about this stream is documented (docs/protocol.md only names the display as "the RTP
- * receiver of the controller's mic and input streams"). What the code assumes, and logs so a
- * board run can tell:
- *
- *   - it arrives as SRTP on a link's selected pair (rtc_link.c decrypts it with the
- *     controller's DTLS-SRTP keys), on the display link, the game session or both
- *   - its payload is Opus at 48 kHz (the codec the offers list as the controller's audio, with
- *     its own audio_ssrc), one frame per packet
+ * The controller sends it once asked with DisplayToController #5 (true) (rtc.c), as SRTP on the
+ * display link's selected pair (rtc_link.c decrypts it with the controller's DTLS-SRTP keys),
+ * under the display offer's audio_ssrc: Opus PT 111, one 20 ms frame per packet, with DTX
+ * (3-byte frames, about 7 a second, while nobody talks). Seen on firmware 316382. The game
+ * session is listened to as well, in case another firmware sends it there.
  *
  * The rtc task hands each packet to mic_on_rtp(), which only copies it into a short queue; a
  * task of its own decodes (Opus wants more stack than the rtc task has) into mono 48 kHz PCM
@@ -48,6 +45,7 @@ static struct {
     pkt_t *q; /* QUEUE_LEN, on the heap */
     int head, count;
     uint32_t queued[2], overflow;
+    int64_t last_queued_ms;
     port_event_t *ev;
     /* the callback */
     stadia_mic_cb_t cb;
@@ -92,6 +90,7 @@ void mic_on_rtp(rtc_link_t *L, int link, const uint8_t *rtp, size_t n)
     memcpy(p->data, payload, plen);
     M.count++;
     M.queued[link ? 1 : 0]++;
+    M.last_queued_ms = port_now_ms();
     port_unlock();
     port_event_set(M.ev);
 }
@@ -214,6 +213,14 @@ static void mic_task(void *arg)
         }
         stats();
     }
+}
+
+int64_t mic_last_packet_ms(void)
+{
+    port_lock();
+    int64_t t = M.last_queued_ms;
+    port_unlock();
+    return t;
 }
 
 bool mic_init(void)

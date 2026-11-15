@@ -8,7 +8,8 @@
  *            answered with the game link's parameters (game.c)
  *   audio    SetAudioModeRequest(mode 2) at READY, then the headset frames as SRTP on the
  *            display link's pair (audio.c)
- *   mic      whatever the controller sends as SRTP media, to the microphone decoder (mic.c)
+ *   mic      DisplayToController #5 (true) after the audio route, repeated while the stream is
+ *            quiet; what the controller sends as SRTP media goes to the decoder (mic.c)
  *
  * Everything on the sockets runs in one task, so only the remote descriptions and the
  * callbacks need the lock.
@@ -34,8 +35,8 @@ enum { RPC_OK = 0, RPC_INVALID_ARGUMENT = 3, RPC_UNIMPLEMENTED = 12 };
 enum { C2D_PROXY_REQUEST = 1, C2D_CONTROLLER_STATE = 2, C2D_INPUT = 3, C2D_AUDIO_CONFIG = 4, C2D_DISCONNECT = 8,
        C2D_BATTERY = 10, C2D_KEEPALIVE = 14, C2D_GET_CURRENT_TIME = 18 };
 /* DisplayToController fields */
-enum { D2C_PROXY_RESPONSE = 1, D2C_GET_CONTROLLER_STATE = 2, D2C_START_GAME = 8, D2C_SET_AUDIO_MODE = 16,
-       D2C_CURRENT_TIME = 21 };
+enum { D2C_PROXY_RESPONSE = 1, D2C_GET_CONTROLLER_STATE = 2, D2C_MIC_ON = 5, D2C_START_GAME = 8,
+       D2C_SET_AUDIO_MODE = 16, D2C_CURRENT_TIME = 21 };
 enum { AUDIO_MODE_WEBRTC_OPUS = 2 };
 
 #define DISPLAY_RPC_DELAY_MS 600
@@ -63,87 +64,49 @@ static struct {
     char game_key[24];
     /* SetAudioMode */
     bool audio_sent, audio_answered;
-    bool audio_f2; /* the request in flight asks for the microphone too */
-    bool f2_refused; /* the controller refused that: ask without it from now on */
     uint32_t audio_ticket;
     int64_t audio_at;
 } D;
 
 static void send_rpc(int kind, uint32_t ticket, int code, const char *message, const uint8_t *payload, size_t plen);
 
-/* ---- the microphone probe ----------------------------------------------------------- */
+/* ---- the microphone ---------------------------------------------------------------- */
 
-/* With g_cfg.mic_probe: after READY (and the headset route), the DisplayToController requests
- * whose use is not known go out one at a time, each with a small payload, and every answer is
- * logged with its code and error message, which in this firmware usually names the handler. Then
- * the other audio modes, and mode 2 again so the headphones keep working. The point is to find
- * what makes the controller send its microphone: watch for "media from the controller" after a
- * step. Stops when the link goes. */
-typedef struct {
-    uint8_t field;
-    uint8_t kind; /* 0 empty, 1 bool/varint field 1 = arg, 2 float 1.0, 3 string "", 4 SetAudioMode */
-    uint8_t arg;
-    const char *what;
-} probe_t;
-
-static const probe_t PROBES[] = {
-    {5, 1, 1, "request5 BoolValue(true)"},
-    {5, 1, 0, "request5 BoolValue(false)"},
-    {6, 0, 0, "request6 Empty"},
-    {7, 0, 0, "request7 Empty"},
-    {13, 1, 0, "f13 Int64Value(0)"},
-    {14, 0, 0, "request14 Empty"},
-    {17, 0, 0, "request17 Empty"},
-    {18, 2, 0, "request18 FloatValue(1.0)"},
-    {22, 1, 1, "f22 Int32Value(1)"},
-    {23, 0, 0, "f23 Empty"},
-    {10, 3, 0, "request10 String(\"\")"},
-    {11, 3, 0, "request11 String(\"\")"},
-    {16, 4, 1, "SetAudioMode(mode 1)"},
-    {16, 4, 4, "SetAudioMode(mode 4)"},
-    {16, 4, 2, "SetAudioMode(mode 2, f3) again"},
-};
-#define PROBE_START_MS 4000
-#define PROBE_STEP_MS 3000
+/* DisplayToController #5 (a BoolValue) with true makes the controller send its microphone: Opus,
+ * PT 111, 20 ms frames with DTX (3-byte frames in silence), as SRTP on the display link's pair
+ * under the display offer's audio SSRC. Found on a controller on firmware 316382 by sending each
+ * request whose use was not known: it answered OK and the stream began 24 ms later. The stream
+ * also stopped by itself after a while, so the request is repeated whenever nothing has come for
+ * MIC_QUIET_MS (it is answered OK while the stream runs too). */
+#define MIC_ON_DELAY_MS 500 /* after the SetAudioMode answer */
+#define MIC_QUIET_MS 3000
 
 static struct {
-    int next;
+    int64_t next_at; /* 0: not yet due */
     uint32_t ticket;
-    int64_t at;
-} PR;
+    uint32_t sent;
+} MIC;
 
-static void probe_send(const probe_t *p)
+static void send_mic_on(void)
 {
-    uint8_t inner[16], msg[24];
-    pbw_t i = PBW(inner, sizeof(inner));
-    if (p->kind == 1) pbw_uint(&i, 1, p->arg);
-    if (p->kind == 2) {
-        const uint8_t one[5] = {0x0D, 0x00, 0x00, 0x80, 0x3F}; /* field 1, fixed32, 1.0f */
-        pbw_raw(&i, one, sizeof(one));
-    }
-    if (p->kind == 3) pbw_str(&i, 1, "");
-    if (p->kind == 4) {
-        pbw_uint(&i, 1, p->arg);
-        if (p->arg == 2) pbw_uint(&i, 3, 1);
-    }
+    uint8_t v[4], msg[8];
+    pbw_t b = PBW(v, sizeof(v));
+    pbw_uint(&b, 1, 1);
     pbw_t m = PBW(msg, sizeof(msg));
-    pbw_bytes(&m, p->field, i.buf, i.len);
-    PR.ticket = ++D.ticket;
-    send_rpc(1, PR.ticket, 0, NULL, m.buf, m.len);
-    SLOGI(TAG, "probe %d/%d: DisplayToController #%u %s sent", PR.next + 1, (int)(sizeof(PROBES) / sizeof(PROBES[0])),
-          p->field, p->what);
+    pbw_bytes(&m, D2C_MIC_ON, b.buf, b.len);
+    MIC.ticket = ++D.ticket;
+    send_rpc(1, MIC.ticket, 0, NULL, m.buf, m.len);
+    if (MIC.sent++ < 3) SLOGI(TAG, "microphone on (DisplayToController #5 true) sent");
 }
 
-static void probe_tick(int64_t now)
+static void mic_tick(int64_t now)
 {
-    if (!g_cfg.mic_probe || !rtc_link_up(&D.link) || !D.audio_answered || !D.ready_at) return;
-    if (PR.next >= (int)(sizeof(PROBES) / sizeof(PROBES[0]))) return;
-    if (!PR.at) PR.at = now + PROBE_START_MS;
-    if (now < PR.at) return;
-    probe_send(&PROBES[PR.next]);
-    PR.next++;
-    PR.at = now + PROBE_STEP_MS;
-    if (PR.next == (int)(sizeof(PROBES) / sizeof(PROBES[0]))) SLOGI(TAG, "probe: last step sent");
+    if (!g_cfg.mic || !rtc_link_up(&D.link) || !D.audio_answered) return;
+    if (!MIC.next_at) MIC.next_at = now + MIC_ON_DELAY_MS;
+    if (now < MIC.next_at) return;
+    int64_t last = mic_last_packet_ms();
+    if (!MIC.sent || now - last >= MIC_QUIET_MS) send_mic_on();
+    MIC.next_at = now + MIC_QUIET_MS;
 }
 
 /* ---- display RPCs ------------------------------------------------------------------- */
@@ -205,17 +168,12 @@ static void send_start_game(void)
 
 /* DisplayToController #16 SetAudioModeRequest {1 mode: 2, 3 f3: true}: the WebRTC Opus route to
  * the headset jack. Without it the controller takes the RTP and plays nothing.
- *
- * With g_cfg.mic_request it also sets f2, the request's one other (bool) field. Its meaning is
- * not known; it is our best guess for "and send me the microphone", next to f3 for the
- * headphones. If the controller refuses the request with f2, it is asked again without. */
+ * (Its f2 is not the microphone: a controller on firmware 316382 answers INVALID_ARGUMENT.) */
 static void send_set_audio_mode(void)
 {
     uint8_t am[8], msg[16];
     pbw_t a = PBW(am, sizeof(am));
     pbw_uint(&a, 1, AUDIO_MODE_WEBRTC_OPUS);
-    D.audio_f2 = g_cfg.mic_request && !D.f2_refused;
-    if (D.audio_f2) pbw_uint(&a, 2, 1);
     pbw_uint(&a, 3, 1);
     pbw_t m = PBW(msg, sizeof(msg));
     pbw_bytes(&m, D2C_SET_AUDIO_MODE, a.buf, a.len);
@@ -224,7 +182,7 @@ static void send_set_audio_mode(void)
     D.audio_sent = true;
     D.audio_answered = false;
     send_rpc(1, D.audio_ticket, 0, NULL, m.buf, m.len);
-    SLOGI(TAG, "SetAudioMode(WebRTC Opus%s) sent", D.audio_f2 ? ", f2 = microphone?" : "");
+    SLOGI(TAG, "SetAudioMode(WebRTC Opus) sent");
 }
 
 static int32_t zigzag(uint64_t v)
@@ -361,28 +319,11 @@ static void on_rpc(const uint8_t *data, size_t len)
         } else {
             SLOGI(TAG, "notification ControllerToDisplay #%u", (unsigned)variant.field);
         }
-    } else if (rpc.kind == 2 && PR.ticket && rpc.ticket == PR.ticket) {
-        char msg[128] = "";
-        pbf_t body;
-        pbr_t r = PBR(data, len);
-        if (pbr_next(&r, &body)) {
-            pbr_t b = PBR(body.data, body.len);
-            while (pbr_next(&b, &f)) {
-                if (f.field == 3) pbf_str(&f, msg, sizeof(msg));
-            }
-        }
-        SLOGI(TAG, "probe answer: code %u \"%s\", %u-byte payload (variant #%u)", (unsigned)rpc.code, msg,
-              (unsigned)rpc.plen, (unsigned)variant.field);
+    } else if (rpc.kind == 2 && MIC.ticket && rpc.ticket == MIC.ticket) {
+        if (rpc.code != 0 || MIC.sent <= 3) SLOGI(TAG, "microphone on answered: code %u", (unsigned)rpc.code);
     } else if (rpc.kind == 2 && D.audio_sent && rpc.ticket == D.audio_ticket) {
         /* a repeat in the same boot is FAILED_PRECONDITION ("already in WebRTC Opus mode"): open too */
-        SLOGI(TAG, "SetAudioMode%s answered: code %u%s", D.audio_f2 ? " with f2" : "", (unsigned)rpc.code,
-              rpc.code == 9 ? " (already open)" : "");
-        if (rpc.code != 0 && rpc.code != 9 && D.audio_f2) {
-            SLOGW(TAG, "the controller refuses SetAudioMode with f2: asking without it");
-            D.f2_refused = true;
-            send_set_audio_mode();
-            return;
-        }
+        SLOGI(TAG, "SetAudioMode answered: code %u%s", (unsigned)rpc.code, rpc.code == 9 ? " (already open)" : "");
         D.audio_answered = true;
     } else if (rpc.kind == 2 && D.start_sent && rpc.ticket == D.start_ticket) {
         char msg[96] = "";
@@ -462,7 +403,7 @@ static void display_on_connected(rtc_link_t *L)
     D.ready_at = 0;
     D.start_sent = false;
     D.audio_sent = false;
-    PR.next = 0, PR.at = 0, PR.ticket = 0;
+    MIC.next_at = 0, MIC.ticket = 0, MIC.sent = 0;
     audio_set_route(false);
 }
 
@@ -508,7 +449,7 @@ static void display_tick(void)
     if (D.audio_sent && rtc_link_up(&D.link) && (D.audio_answered || now - D.audio_at >= AUDIO_ROUTE_WAIT_MS)) {
         audio_set_route(true);
     }
-    probe_tick(now);
+    mic_tick(now);
     audio_tick(&D.link);
 }
 

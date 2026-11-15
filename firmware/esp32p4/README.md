@@ -12,7 +12,7 @@ The Python code at the top of this repository stays as the reference implementat
 | 2b | STUN/DTLS on UDP 40000, display RPCs up to READY: input on the serial log | done: tested on the board, button names match |
 | 3 | StartGame and the game session on UDP 40001; a USB Xbox 360 controller with rumble | done: tested on the board with Linux (xpad): all inputs, rumble held 8 s |
 | 4 | USB headphones feeding the controller's headset jack (Opus over SRTP) | done: tested on the board with Linux (PipeWire): music plays in the controller's headset |
-| 5 | USB microphone fed by the controller's headset microphone | experimental: the decode path is tested on a PC; how the controller sends its microphone is still being found out on the board |
+| 5 | USB microphone fed by the controller's headset microphone | in test: the controller's microphone request found and decoded on the board |
 
 ## Build and flash
 
@@ -145,39 +145,42 @@ Microsoft OS 2.0 descriptor, and the headphones get the USB Audio 2.0 driver. Li
 1209 XInput pads too (kernel 5.12+). With the headphones turned off in menuconfig the dongle stays
 045E:028E.
 
-## Step 5: the microphone (experimental)
+## Step 5: the microphone
 
 The USB headset also has a **microphone** (48 kHz 16-bit mono, with volume from -50 to +20 dB
-and mute). Whatever the board decodes from the controller is recorded there:
+and mute), fed by the microphone of the headset plugged into the controller:
 
 ```
-UDP from the controller (either link) -> SRTP checked and decrypted (the controller's DTLS keys)
-  -> RTP -> Opus decoder (mono, 48 kHz; lost frames concealed) -> 40 ms buffer -> USB IN 0x82
+DisplayToController #5 BoolValue(true) -> the controller sends Opus (PT 111, 20 ms, DTX)
+  as SRTP on the display link's pair -> checked and decrypted (the controller's DTLS keys)
+  -> Opus decoder (mono, 48 kHz; lost frames concealed) -> 40 ms buffer -> USB IN 0x82
 ```
 
-How the controller sends its microphone is not documented. The board assumes it is SRTP media
-on a link's selected pair (the controller's WebRTC offers list an audio SSRC and Opus 48 kHz),
-and logs what it sees so a run can tell:
+Nothing documented this request: a probe build sent each display request whose use was not
+known, and #5 with `true` started the stream 24 ms later (controller firmware 316382). The stream
+is under the display offer's audio SSRC and uses DTX: about 7 tiny packets a second while
+nobody talks. It also stopped by itself during that test, so the board repeats the request
+whenever nothing has come for 3 s.
 
 ```
-signaling: offer audio: SSRC 00000457, codec 1, 2 channel(s), 48000 Hz
-rtc: SetAudioMode(WebRTC Opus, f2 = microphone?) sent
-rtc: SetAudioMode with f2 answered: code 0
-rtc: display: media from the controller: SSRC ..., PT 111, seq ..., ... bytes
-mic: microphone stream on the display link: PT 111, ...-byte packets, 960 samples each
-mic: 500 packets in 10 s (display 500, game 0), 500 decoded, 0 lost, 0 errors, 0 dropped; 10000 ms of sound, peak -20 dBFS
+rtc: SetAudioMode answered: code 0
+rtc: microphone on (DisplayToController #5 true) sent
+rtc: microphone on answered: code 0
+rtc: display: media from the controller: SSRC ..., PT 111, seq ..., 33 bytes
+mic: microphone stream on the display link: PT 111, 3-byte packets, 960 samples each
+mic: 77 packets in 10 s (display 77, game 0), 77 decoded, 0 lost, 0 errors, 0 dropped; 1540 ms of sound, peak -10 dBFS
 usb_audio: the host started recording
-usb_audio: microphone: 10000 ms in, 80000 packets out in 10 s, 0 underruns, 0 skips
 ```
-
-`SetAudioModeRequest` has one bool field (`f2`) whose use is unknown; the board sets it as a
-guess for "send the microphone too", and asks again without it if the controller refuses.
-Both are menuconfig options (*Pass the controller's microphone to the USB headset*, *Ask for the
-microphone in SetAudioMode*). With no "media from the controller" line, the controller sent
-nothing: the microphone stays silent and the headphones work as before.
 
 The buffer follows the computer's clock: past 120 ms of backlog it skips back to 40 ms, and when
-it runs dry the computer gets silence until it has 40 ms again.
+it runs dry the computer gets silence until it has 40 ms again. menuconfig → *Pass the
+controller's microphone to the USB headset* turns the request and the decoder off (the USB
+microphone stays, silent).
+
+What the other unknown requests answered, for the record: #6, #7, #11, #14, #17 and #18 (float)
+OK; #13, #22 and #23 UNIMPLEMENTED; #10 with an empty string code 1 "Disconnected before connect
+completed."; `SetAudioMode` mode 1 "Audio mode not implemented", mode 4 OK, and mode 2 with
+`f2` INVALID_ARGUMENT.
 
 ## Updating the C6 (Wi-Fi) firmware
 
