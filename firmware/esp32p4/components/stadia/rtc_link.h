@@ -69,6 +69,7 @@ struct rtc_link {
     bool srtp_ready;
     srtp_tx_t srtp_out; /* our media (the headset audio): the DTLS server's write key and salt */
     int64_t dtls_at;
+    int64_t last_rx; /* the last datagram from the selected peer */
     /* our RTP stream (input acks, rumble) */
     uint16_t tx_seq;
     uint32_t ssrc;

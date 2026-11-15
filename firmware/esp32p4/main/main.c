@@ -38,6 +38,7 @@ static const char *TAG = "dongle";
 static void on_pad(const stadia_pad_t *pad, void *arg)
 {
     usb_pad_state_t st = {0}; /* a disconnect releases everything */
+    status_led_set(pad->connected ? LED_CONNECTED : LED_WAITING);
     if (pad->connected) {
         st.buttons = (pad->buttons & XINPUT_SHARED_BITS) | ((pad->buttons & STADIA_BTN_STADIA) ? XINPUT_GUIDE : 0);
         st.lt = pad->lt, st.rt = pad->rt;
@@ -73,6 +74,7 @@ void app_main(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+    status_led_start();
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
@@ -115,5 +117,6 @@ void app_main(void)
         ESP_LOGE(TAG, "no memory for the audio task: no headset audio");
     }
 #endif
+    status_led_set(LED_WAITING);
     ESP_LOGI(TAG, "ready: wake the controller (about 1 s press of the Stadia button)");
 }

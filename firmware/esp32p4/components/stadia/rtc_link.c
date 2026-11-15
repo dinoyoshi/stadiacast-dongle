@@ -45,6 +45,10 @@ static const char *TAG = "rtc";
 #define FAST_CHECK_MS 1000
 #define FAST_CHECK_WINDOW_MS 30000
 #define KEEPALIVE_MS 2500
+/* A connected peer answers our keepalive checks every 2.5 s, so this much silence means the
+ * controller went to sleep or lost power without a close_notify: close the link, which
+ * releases the gamepad, instead of holding its last state until it comes back. */
+#define LINK_SILENCE_MS 10000
 
 static struct {
     mbedtls_ctr_drbg_context drbg;
@@ -591,6 +595,7 @@ void rtc_link_poll(rtc_link_t *L, const uint8_t *buf, size_t n, const struct soc
 {
     take_remote(L);
     if (n < 2) return;
+    if (L->selected && same_addr(from, &L->peer)) L->last_rx = port_now_ms();
     uint8_t b = buf[0];
     if (b < 4 && n >= 20 && buf[4] == 0x21 && buf[5] == 0x12 && buf[6] == 0xA4 && buf[7] == 0x42) {
         handle_stun(L, buf, n, from);
@@ -627,6 +632,15 @@ void rtc_link_tick(rtc_link_t *L)
         send_check(L, -1);
         bool fast = !L->dtls_on && now < L->fast_until;
         L->next_keepalive = now + (fast ? FAST_CHECK_MS : KEEPALIVE_MS);
+    }
+    if (L->dtls_up) {
+        int64_t heard = L->last_rx > L->dtls_at ? L->last_rx : L->dtls_at;
+        if (now - heard > LINK_SILENCE_MS) {
+            SLOGW(TAG, "%s: nothing from the controller for %d s: closing the link", L->name, LINK_SILENCE_MS / 1000);
+            dtls_reset(L);
+            L->selected = L->verified_out = L->have_remote = false;
+            return;
+        }
     }
     /* DTLS retransmission */
     if (L->dtls_on && !L->dtls_up && timer_get(L) == 2) {
