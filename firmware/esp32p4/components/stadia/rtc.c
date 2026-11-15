@@ -402,7 +402,7 @@ static void display_on_connected(rtc_link_t *L)
     D.state_reqs = 0;
     D.ready_at = 0;
     D.start_sent = false;
-    D.audio_sent = false;
+    D.audio_sent = D.audio_answered = false; /* the microphone waits for this link's answer */
     MIC.next_at = 0, MIC.ticket = 0, MIC.sent = 0;
     audio_set_route(false);
 }

@@ -234,5 +234,6 @@ bool mic_init(void)
         M.q = NULL;
         return false;
     }
-    return port_spawn(mic_task, NULL, "mic", STADIA_AUDIO_STACK);
+    /* below the rtc task and the headphones' encoder: the microphone can wait a few ms */
+    return port_spawn_low(mic_task, NULL, "mic", STADIA_AUDIO_STACK);
 }

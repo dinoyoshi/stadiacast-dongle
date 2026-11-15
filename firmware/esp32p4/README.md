@@ -147,7 +147,7 @@ Microsoft OS 2.0 descriptor, and the headphones get the USB Audio 2.0 driver. Li
 
 ## Step 5: the microphone
 
-The USB headset also has a **microphone** (48 kHz 16-bit mono, with volume from -50 to +20 dB
+The USB headset also has a **microphone** (48 kHz 16-bit mono, with volume from -50 to 0 dB
 and mute), fed by the microphone of the headset plugged into the controller:
 
 ```

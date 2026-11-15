@@ -12,7 +12,7 @@
  * per 1 ms frame (6 per 125 us microframe at high speed) on isochronous IN 0x82, arming the next
  * packet as each one completes. The ring starts MIC_PRIME_MS deep and follows the host's clock,
  * not the controller's: past MIC_MAX_MS of backlog it skips back to MIC_PRIME_MS, and when it
- * runs dry the host gets silence until it has primed again. Volume (-50..+20 dB) and mute are
+ * runs dry the host gets silence until it has primed again. Volume (-50..0 dB) and mute are
  * applied as the packet is built.
  *
  * The clock is fixed at 48 kHz for both.
@@ -35,7 +35,7 @@ static const char *TAG = "usb_audio";
 #define VOL_MIN (-50 * 256) /* 1/256 dB */
 #define VOL_MAX 0
 #define VOL_RES 256
-#define MIC_VOL_MAX (20 * 256)
+#define MIC_VOL_MAX 0 /* hosts put a new microphone at the top of its range: +20 dB clipped */
 #define RING_BYTES (48 * 4 * 60) /* 60 ms */
 #define MIC_RING 8192            /* samples, a power of two: 170 ms */
 #define MIC_PRIME_MS 40

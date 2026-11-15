@@ -30,7 +30,7 @@ static void trampoline(void *p)
     vTaskDelete(NULL);
 }
 
-bool port_spawn(port_task_fn fn, void *arg, const char *name, int stack_bytes)
+static bool spawn(port_task_fn fn, void *arg, const char *name, int stack_bytes, int prio)
 {
     struct start *s = malloc(sizeof(*s));
     if (!s) {
@@ -38,11 +38,21 @@ bool port_spawn(port_task_fn fn, void *arg, const char *name, int stack_bytes)
     }
     s->fn = fn;
     s->arg = arg;
-    if (xTaskCreate(trampoline, name, stack_bytes, s, 5, NULL) != pdPASS) {
+    if (xTaskCreate(trampoline, name, stack_bytes, s, prio, NULL) != pdPASS) {
         free(s);
         return false;
     }
     return true;
+}
+
+bool port_spawn(port_task_fn fn, void *arg, const char *name, int stack_bytes)
+{
+    return spawn(fn, arg, name, stack_bytes, 5);
+}
+
+bool port_spawn_low(port_task_fn fn, void *arg, const char *name, int stack_bytes)
+{
+    return spawn(fn, arg, name, stack_bytes, 4);
 }
 
 int64_t port_now_ms(void)
