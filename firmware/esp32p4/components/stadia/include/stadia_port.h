@@ -24,6 +24,8 @@ int64_t port_now_us(void);
 double port_wall_time(void);
 
 void port_sleep_ms(int ms);
+/* Memory the CPU reads fastest (internal RAM on the board, not PSRAM); NULL if there is none left. */
+void *port_alloc_fast(size_t n);
 void port_random(void *buf, size_t len);
 /* Inflate a zlib (or else raw deflate) stream into dst. Returns the size, 0 on failure. */
 size_t port_inflate(const uint8_t *src, size_t n, uint8_t *dst, size_t cap);

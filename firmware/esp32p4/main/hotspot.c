@@ -55,6 +55,9 @@ esp_netif_t *hotspot_start(void)
             .authmode = WIFI_AUTH_WPA2_PSK,
             .pairwise_cipher = WIFI_CIPHER_TYPE_CCMP,
             .pmf_cfg = {.capable = false, .required = false},
+            /* buffered frames to a dozing station go out at every beacon, not every 3rd: the
+             * headset audio is a packet every 20 ms */
+            .dtim_period = 1,
         },
     };
     strlcpy((char *)cfg.ap.ssid, CONFIG_DONGLE_SSID, sizeof(cfg.ap.ssid));

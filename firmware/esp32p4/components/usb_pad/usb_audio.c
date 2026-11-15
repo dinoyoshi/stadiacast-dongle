@@ -57,7 +57,7 @@ static void update_gain(void)
 
 bool usb_audio_init(void)
 {
-    U.ring = xStreamBufferCreateStatic(RING_BYTES, 4, s_ring_mem, &s_ring_ctl);
+    U.ring = xStreamBufferCreateStatic(RING_BYTES, 480 * 4, s_ring_mem, &s_ring_ctl); /* wake the reader per 10 ms */
     U.volume = 0;
     update_gain();
     return U.ring != NULL;

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -57,6 +58,11 @@ int64_t port_now_us(void)
 double port_wall_time(void)
 {
     return (double)STADIA_BUILD_EPOCH + esp_timer_get_time() / 1e6;
+}
+
+void *port_alloc_fast(size_t n)
+{
+    return heap_caps_malloc(n, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 
 void port_sleep_ms(int ms)
