@@ -1,118 +1,42 @@
 /*
- * XInput (wired Xbox 360 controller) as a TinyUSB application class driver.
+ * The gamepad as a TinyUSB application class driver, in the mode pad_modes.c describes.
  *
- * The host's XUSB / xpad drivers bind by VID:PID 045E:028E and the vendor interface
- * FF/5D/01. Input goes out as the 20-byte report {0x00, 0x14, wButtons, LT, RT, LX, LY, RX,
- * RY, 6 x 0} on interrupt IN 0x81; rumble comes back as {0x00, 0x08, 0x00, large, small, ...}
- * on interrupt OUT 0x01 (LED patterns {0x01, 0x03, n} are ignored).
+ * Xbox 360: the host's XUSB / xpad drivers bind by VID:PID 045E:028E and the vendor interface
+ * FF/5D/01; input goes out as the 20-byte report on interrupt IN 0x81, rumble comes back on
+ * interrupt OUT 0x01.
+ * DualShock 4, Switch Pro, HID gamepad: a HID interface (class 3) with interrupt IN 0x81 and
+ * OUT 0x01; this driver answers the HID class requests itself (report descriptor, GET_REPORT
+ * for the DualShock 4's feature reports, SET_REPORT as another way in for output reports).
  *
- * With audio the device is composite (class EF/02/01): XInput stays interface 0 and the UAC2
- * headphones of usb_audio.c are interfaces 1 and 2, behind an interface association.
+ * With audio the device is composite (class EF/02/01): the gamepad stays interface 0 and the
+ * UAC2 headphones of usb_audio.c are interfaces 1 and 2, behind an interface association.
+ * Changing the mode takes the device off the bus (TinyUSB uninstalled) and brings it back with
+ * the new descriptors.
  */
 #include "usb_pad.h"
+#include "pad_modes.h"
 #include "usb_audio.h"
 
+#include <stdlib.h>
 #include <string.h>
 
+#include "class/hid/hid.h"
+#include "device/usbd_pvt.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
-#include "device/usbd_pvt.h"
 
 static const char *TAG = "usb_pad";
 
-#define XINPUT_EP_IN 0x81
-#define XINPUT_EP_OUT 0x01
-#define XINPUT_EP_SIZE 32
-#define XINPUT_REPORT_LEN 20
+#define PAD_EP_IN 0x81
+#define PAD_EP_OUT 0x01
+#define PAD_EP_SIZE 64
+#define CONFIG_MAX 256
 
 /* ---- descriptors -------------------------------------------------------------------- */
-
-static const tusb_desc_device_t s_device = {
-    .bLength = sizeof(tusb_desc_device_t),
-    .bDescriptorType = TUSB_DESC_DEVICE,
-    .bcdUSB = 0x0200,
-    .bDeviceClass = 0xFF,
-    .bDeviceSubClass = 0xFF,
-    .bDeviceProtocol = 0xFF,
-    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
-    .idVendor = 0x045E, /* Microsoft */
-    .idProduct = 0x028E, /* Xbox 360 Controller (wired) */
-    .bcdDevice = 0x0114,
-    .iManufacturer = 1,
-    .iProduct = 2,
-    .iSerialNumber = 3,
-    .bNumConfigurations = 1,
-};
-
-/* the same, as a composite device with the sound card */
-static const tusb_desc_device_t s_device_audio = {
-    .bLength = sizeof(tusb_desc_device_t),
-    .bDescriptorType = TUSB_DESC_DEVICE,
-    .bcdUSB = 0x0200,
-    .bDeviceClass = TUSB_CLASS_MISC,
-    .bDeviceSubClass = MISC_SUBCLASS_COMMON,
-    .bDeviceProtocol = MISC_PROTOCOL_IAD,
-    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
-    .idVendor = 0x045E,
-    .idProduct = 0x028E,
-    .bcdDevice = 0x0114,
-    .iManufacturer = 1,
-    .iProduct = 2,
-    .iSerialNumber = 3,
-    .bNumConfigurations = 1,
-};
-
-static const tusb_desc_device_qualifier_t s_qualifier_audio = {
-    .bLength = sizeof(tusb_desc_device_qualifier_t),
-    .bDescriptorType = TUSB_DESC_DEVICE_QUALIFIER,
-    .bcdUSB = 0x0200,
-    .bDeviceClass = TUSB_CLASS_MISC,
-    .bDeviceSubClass = MISC_SUBCLASS_COMMON,
-    .bDeviceProtocol = MISC_PROTOCOL_IAD,
-    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
-    .bNumConfigurations = 1,
-    .bReserved = 0,
-};
-
-static const tusb_desc_device_qualifier_t s_qualifier = {
-    .bLength = sizeof(tusb_desc_device_qualifier_t),
-    .bDescriptorType = TUSB_DESC_DEVICE_QUALIFIER,
-    .bcdUSB = 0x0200,
-    .bDeviceClass = 0xFF,
-    .bDeviceSubClass = 0xFF,
-    .bDeviceProtocol = 0xFF,
-    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
-    .bNumConfigurations = 1,
-    .bReserved = 0,
-};
-
-#define XINPUT_ITF_LEN (9 + 17 + 7 + 7)
-#define XINPUT_CONFIG_LEN (9 + XINPUT_ITF_LEN)
-#define AUDIO_CONFIG_LEN (XINPUT_CONFIG_LEN + USB_AUDIO_DESC_LEN)
-
-/* configuration: n interfaces, bus powered, 500 mA */
-#define CONFIG_HEADER(total, nitf) 9, TUSB_DESC_CONFIGURATION, U16_TO_U8S_LE(total), nitf, 1, 0, 0x80, 0xFA
-
-/* bInterval: full speed in frames (1 ms), high speed as 2^(n-1) microframes (4 -> 1 ms, 7 -> 8 ms). */
-#define XINPUT_ITF(in_interval, out_interval)                                                                         \
-        /* interface 0: vendor FF/5D/01 with two endpoints */                                                         \
-        9, TUSB_DESC_INTERFACE, 0, 0, 2, 0xFF, 0x5D, 0x01, 0,                                                       \
-        /* the XUSB "unknown" descriptor (type 0x21) every wired 360 controller carries */                            \
-        17, 0x21, 0x00, 0x01, 0x01, 0x25, XINPUT_EP_IN, 0x14, 0x00, 0x00, 0x00, 0x00, 0x13, XINPUT_EP_OUT, 0x08,     \
-        0x00, 0x00,                                                                                                   \
-        /* interrupt IN, then interrupt OUT */                                                                        \
-        7, TUSB_DESC_ENDPOINT, XINPUT_EP_IN, TUSB_XFER_INTERRUPT, XINPUT_EP_SIZE, 0, (in_interval),                  \
-        7, TUSB_DESC_ENDPOINT, XINPUT_EP_OUT, TUSB_XFER_INTERRUPT, XINPUT_EP_SIZE, 0, (out_interval)
-
-static const uint8_t s_config_fs[] = {CONFIG_HEADER(XINPUT_CONFIG_LEN, 1), XINPUT_ITF(1, 8)};
-static const uint8_t s_config_hs[] = {CONFIG_HEADER(XINPUT_CONFIG_LEN, 1), XINPUT_ITF(4, 7)};
-static const uint8_t s_config_audio_fs[] = {CONFIG_HEADER(AUDIO_CONFIG_LEN, 3), XINPUT_ITF(1, 8), USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_FS)};
-static const uint8_t s_config_audio_hs[] = {CONFIG_HEADER(AUDIO_CONFIG_LEN, 3), XINPUT_ITF(4, 7), USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_HS)};
-_Static_assert(sizeof(s_config_fs) == XINPUT_CONFIG_LEN, "gamepad configuration length");
-_Static_assert(sizeof(s_config_audio_hs) == AUDIO_CONFIG_LEN, "composite configuration length");
 
 static const char *s_strings[] = {
     (const char[]){0x09, 0x04}, /* English */
@@ -122,64 +46,160 @@ static const char *s_strings[] = {
     "Controller headset",
 };
 
+static const uint8_t s_audio_fs[] = {USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_FS)};
+static const uint8_t s_audio_hs[] = {USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_HS)};
+_Static_assert(sizeof(s_audio_hs) == USB_AUDIO_DESC_LEN, "audio descriptor length");
+
 /* ---- state -------------------------------------------------------------------------- */
 
 typedef struct {
-    TUD_EPBUF_DEF(in, XINPUT_EP_SIZE);
-    TUD_EPBUF_DEF(out, XINPUT_EP_SIZE);
-} xinput_epbuf_t;
+    TUD_EPBUF_DEF(in, PAD_EP_SIZE);
+    TUD_EPBUF_DEF(out, PAD_EP_SIZE);
+} pad_epbuf_t;
 
-CFG_TUD_MEM_SECTION static xinput_epbuf_t s_buf;
+CFG_TUD_MEM_SECTION static pad_epbuf_t s_buf;
 
 static struct {
+    usb_pad_mode_t mode;
+    bool audio_ok, audio; /* audio_ok: the headphones can work; audio: in this mode's descriptors */
     uint8_t rhport;
-    bool open;
+    volatile bool open;
     SemaphoreHandle_t lock;
-    uint8_t report[XINPUT_REPORT_LEN];
+    usb_pad_state_t state;
     bool dirty;
+    uint8_t reply[PAD_REPORT_MAX];
+    size_t reply_len;
     usb_pad_rumble_cb_t rumble_cb;
     void *rumble_arg;
     uint8_t large, small;
+    tusb_desc_device_t device;
+    tusb_desc_device_qualifier_t qualifier;
+    uint8_t *config_fs, *config_hs; /* CONFIG_MAX each, on the heap */
+    uint8_t hid_desc[9];
+    uint8_t ctrl[PAD_REPORT_MAX];
 } s;
+
+static void build_descriptors(void)
+{
+    const pad_mode_info_t *m = pad_mode_info(s.mode);
+    s.audio = s.audio_ok && m->audio_ok;
+    uint8_t cls = s.audio ? TUSB_CLASS_MISC : (m->report_desc ? 0x00 : 0xFF);
+    uint8_t sub = s.audio ? MISC_SUBCLASS_COMMON : (m->report_desc ? 0x00 : 0xFF);
+    uint8_t proto = s.audio ? MISC_PROTOCOL_IAD : (m->report_desc ? 0x00 : 0xFF);
+    s.device = (tusb_desc_device_t){
+        .bLength = sizeof(tusb_desc_device_t),
+        .bDescriptorType = TUSB_DESC_DEVICE,
+        .bcdUSB = 0x0200,
+        .bDeviceClass = cls,
+        .bDeviceSubClass = sub,
+        .bDeviceProtocol = proto,
+        .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
+        .idVendor = m->vid,
+        .idProduct = m->pid,
+        .bcdDevice = m->bcd,
+        .iManufacturer = 1,
+        .iProduct = 2,
+        .iSerialNumber = 3,
+        .bNumConfigurations = 1,
+    };
+    s.qualifier = (tusb_desc_device_qualifier_t){
+        .bLength = sizeof(tusb_desc_device_qualifier_t),
+        .bDescriptorType = TUSB_DESC_DEVICE_QUALIFIER,
+        .bcdUSB = 0x0200,
+        .bDeviceClass = cls,
+        .bDeviceSubClass = sub,
+        .bDeviceProtocol = proto,
+        .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
+        .bNumConfigurations = 1,
+        .bReserved = 0,
+    };
+    const uint8_t hid[9] = {9, HID_DESC_TYPE_HID, 0x11, 0x01, 0, 1, HID_DESC_TYPE_REPORT,
+                            (uint8_t)(m->report_desc_len & 0xFF), (uint8_t)(m->report_desc_len >> 8)};
+    memcpy(s.hid_desc, hid, sizeof(hid));
+
+    for (int hs = 0; hs < 2; hs++) {
+        uint8_t *c = hs ? s.config_hs : s.config_fs;
+        /* bInterval: full speed in frames (1 ms), high speed as 2^(n-1) microframes */
+        uint8_t in_iv = hs ? m->interval_hs : m->interval_fs;
+        size_t n = 9;
+        if (!m->report_desc) {
+            uint8_t out_iv = hs ? 7 : 8; /* rumble: 8 ms */
+            const uint8_t x[] = {
+                /* interface 0: vendor FF/5D/01 with two endpoints */
+                9, TUSB_DESC_INTERFACE, 0, 0, 2, 0xFF, 0x5D, 0x01, 0,
+                /* the XUSB "unknown" descriptor (type 0x21) every wired 360 controller carries */
+                17, 0x21, 0x00, 0x01, 0x01, 0x25, PAD_EP_IN, 0x14, 0x00, 0x00, 0x00, 0x00, 0x13, PAD_EP_OUT, 0x08,
+                0x00, 0x00,
+                7, TUSB_DESC_ENDPOINT, PAD_EP_IN, TUSB_XFER_INTERRUPT, 32, 0, in_iv,
+                7, TUSB_DESC_ENDPOINT, PAD_EP_OUT, TUSB_XFER_INTERRUPT, 32, 0, out_iv,
+            };
+            memcpy(c + n, x, sizeof(x));
+            n += sizeof(x);
+        } else {
+            const uint8_t h[] = {
+                9, TUSB_DESC_INTERFACE, 0, 0, 2, TUSB_CLASS_HID, 0, 0, 0,
+                9, HID_DESC_TYPE_HID, 0x11, 0x01, 0, 1, HID_DESC_TYPE_REPORT,
+                (uint8_t)(m->report_desc_len & 0xFF), (uint8_t)(m->report_desc_len >> 8),
+                7, TUSB_DESC_ENDPOINT, PAD_EP_IN, TUSB_XFER_INTERRUPT, PAD_EP_SIZE, 0, in_iv,
+                7, TUSB_DESC_ENDPOINT, PAD_EP_OUT, TUSB_XFER_INTERRUPT, PAD_EP_SIZE, 0, in_iv,
+            };
+            memcpy(c + n, h, sizeof(h));
+            n += sizeof(h);
+        }
+        if (s.audio) {
+            const uint8_t *a = hs ? s_audio_hs : s_audio_fs;
+            memcpy(c + n, a, USB_AUDIO_DESC_LEN);
+            n += USB_AUDIO_DESC_LEN;
+        }
+        /* configuration: 1 or 3 interfaces, bus powered, 500 mA */
+        const uint8_t head[9] = {9, TUSB_DESC_CONFIGURATION, (uint8_t)(n & 0xFF), (uint8_t)(n >> 8),
+                                 s.audio ? 3 : 1, 1, 0, 0x80, 0xFA};
+        memcpy(c, head, sizeof(head));
+    }
+}
 
 /* ---- the class driver --------------------------------------------------------------- */
 
-static void xinput_init(void)
+static void pad_init(void)
 {
 }
 
-static bool xinput_deinit(void)
+static bool pad_deinit(void)
 {
     return true;
 }
 
-static void xinput_reset(uint8_t rhport)
+static void pad_reset_cb(uint8_t rhport)
 {
     s.open = false;
 }
 
-/* Send the pending report if the IN endpoint is free. */
+/* Send a pending reply, else the input report if it changed (or always, when streaming). */
 static void try_send(void)
 {
     if (!s.open || !tud_ready()) return;
-    if (!usbd_edpt_claim(s.rhport, XINPUT_EP_IN)) return;
+    if (!usbd_edpt_claim(s.rhport, PAD_EP_IN)) return;
+    size_t n = 0;
     xSemaphoreTake(s.lock, portMAX_DELAY);
-    bool dirty = s.dirty;
-    if (dirty) {
-        memcpy(s_buf.in, s.report, XINPUT_REPORT_LEN);
+    if (s.reply_len) {
+        n = s.reply_len;
+        memcpy(s_buf.in, s.reply, n);
+        s.reply_len = 0;
+    } else if (s.dirty || pad_streaming(s.mode)) {
+        n = pad_input_report(s.mode, &s.state, s_buf.in);
         s.dirty = false;
     }
     xSemaphoreGive(s.lock);
-    if (!dirty || !usbd_edpt_xfer(s.rhport, XINPUT_EP_IN, s_buf.in, XINPUT_REPORT_LEN, false)) {
-        usbd_edpt_release(s.rhport, XINPUT_EP_IN);
+    if (!n || !usbd_edpt_xfer(s.rhport, PAD_EP_IN, s_buf.in, (uint16_t)n, false)) {
+        usbd_edpt_release(s.rhport, PAD_EP_IN);
     }
 }
 
-static uint16_t xinput_open(uint8_t rhport, tusb_desc_interface_t const *itf, uint16_t max_len)
+static uint16_t pad_open(uint8_t rhport, tusb_desc_interface_t const *itf, uint16_t max_len)
 {
-    if (itf->bInterfaceClass != 0xFF || itf->bInterfaceSubClass != 0x5D || itf->bInterfaceProtocol != 0x01) {
-        return 0;
-    }
+    bool xinput = itf->bInterfaceClass == 0xFF && itf->bInterfaceSubClass == 0x5D && itf->bInterfaceProtocol == 0x01;
+    bool hid = itf->bInterfaceClass == TUSB_CLASS_HID;
+    if (!xinput && !hid) return 0;
     uint16_t len = tu_desc_len(itf);
     uint8_t const *p = tu_desc_next(itf);
     int opened = 0;
@@ -194,8 +214,8 @@ static uint16_t xinput_open(uint8_t rhport, tusb_desc_interface_t const *itf, ui
     }
     s.rhport = rhport;
     s.open = true;
-    usbd_edpt_xfer(rhport, XINPUT_EP_OUT, s_buf.out, XINPUT_EP_SIZE, false);
-    ESP_LOGI(TAG, "XInput interface opened by the host");
+    usbd_edpt_xfer(rhport, PAD_EP_OUT, s_buf.out, PAD_EP_SIZE, false);
+    ESP_LOGI(TAG, "%s interface opened by the host", pad_mode_info(s.mode)->name);
     xSemaphoreTake(s.lock, portMAX_DELAY);
     s.dirty = true; /* the current state, so the host starts from it */
     xSemaphoreGive(s.lock);
@@ -203,64 +223,140 @@ static uint16_t xinput_open(uint8_t rhport, tusb_desc_interface_t const *itf, ui
     return len;
 }
 
-/* The XUSB driver's vendor requests (capabilities, serial) are optional: stall them. */
-static bool xinput_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request)
+/* An output report, from interrupt OUT or SET_REPORT. */
+static void on_output(const uint8_t *data, size_t len)
 {
-    return false;
+    static pad_output_t o; /* the USB task only */
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    pad_output(s.mode, &s.state, data, len, &o);
+    if (o.reply_len) {
+        memcpy(s.reply, o.reply, o.reply_len);
+        s.reply_len = o.reply_len;
+    }
+    xSemaphoreGive(s.lock);
+    if (o.rumble && (o.large != s.large || o.small != s.small)) {
+        s.large = o.large, s.small = o.small;
+        if (s.rumble_cb) s.rumble_cb(s.large, s.small, s.rumble_arg);
+    }
+    try_send();
 }
 
-static bool xinput_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes)
+static bool pad_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *req)
 {
-    if (ep_addr == XINPUT_EP_OUT) {
-        const uint8_t *b = s_buf.out;
-        if (result == XFER_RESULT_SUCCESS && xferred_bytes >= 5 && b[0] == 0x00 && b[1] == 0x08) {
-            if (b[3] != s.large || b[4] != s.small) {
-                s.large = b[3], s.small = b[4];
-                if (s.rumble_cb) s.rumble_cb(s.large, s.small, s.rumble_arg);
-            }
+    const pad_mode_info_t *m = pad_mode_info(s.mode);
+    if (!m->report_desc) return false; /* XInput: the XUSB vendor requests are optional, stall them */
+    if (req->bmRequestType_bit.recipient != TUSB_REQ_RCPT_INTERFACE) return false;
+
+    if (req->bmRequestType_bit.type == TUSB_REQ_TYPE_STANDARD) {
+        if (req->bRequest != TUSB_REQ_GET_DESCRIPTOR) return false;
+        if (stage != CONTROL_STAGE_SETUP) return true;
+        uint8_t type = tu_u16_high(req->wValue);
+        if (type == HID_DESC_TYPE_REPORT) {
+            return tud_control_xfer(rhport, req, (void *)m->report_desc, m->report_desc_len);
         }
-        usbd_edpt_xfer(rhport, XINPUT_EP_OUT, s_buf.out, XINPUT_EP_SIZE, false);
-    } else if (ep_addr == XINPUT_EP_IN) {
+        if (type == HID_DESC_TYPE_HID) return tud_control_xfer(rhport, req, s.hid_desc, sizeof(s.hid_desc));
+        return false;
+    }
+    if (req->bmRequestType_bit.type != TUSB_REQ_TYPE_CLASS) return false;
+
+    switch (req->bRequest) {
+    case HID_REQ_CONTROL_GET_REPORT:
+        if (stage == CONTROL_STAGE_SETUP) {
+            uint8_t type = tu_u16_high(req->wValue), id = tu_u16_low(req->wValue);
+            size_t n = 0;
+            xSemaphoreTake(s.lock, portMAX_DELAY);
+            if (type == HID_REPORT_TYPE_FEATURE) {
+                n = pad_feature(s.mode, id, s.ctrl, sizeof(s.ctrl));
+            } else if (type == HID_REPORT_TYPE_INPUT) {
+                n = pad_input_report(s.mode, &s.state, s.ctrl);
+            }
+            xSemaphoreGive(s.lock);
+            if (!n) {
+                ESP_LOGI(TAG, "GET_REPORT type %u id 0x%02x: none", type, id);
+                return false;
+            }
+            return tud_control_xfer(rhport, req, s.ctrl, (uint16_t)(n < req->wLength ? n : req->wLength));
+        }
+        return true;
+    case HID_REQ_CONTROL_SET_REPORT:
+        if (stage == CONTROL_STAGE_SETUP) {
+            uint16_t n = req->wLength < sizeof(s.ctrl) ? req->wLength : sizeof(s.ctrl);
+            return tud_control_xfer(rhport, req, s.ctrl, n);
+        }
+        if (stage == CONTROL_STAGE_DATA) {
+            size_t n = req->wLength < sizeof(s.ctrl) ? req->wLength : sizeof(s.ctrl);
+            on_output(s.ctrl, n);
+        }
+        return true;
+    case HID_REQ_CONTROL_SET_IDLE:
+    case HID_REQ_CONTROL_SET_PROTOCOL:
+        if (stage == CONTROL_STAGE_SETUP) return tud_control_status(rhport, req);
+        return true;
+    case HID_REQ_CONTROL_GET_IDLE:
+    case HID_REQ_CONTROL_GET_PROTOCOL:
+        if (stage == CONTROL_STAGE_SETUP) {
+            s.ctrl[0] = req->bRequest == HID_REQ_CONTROL_GET_PROTOCOL ? 1 : 0; /* report protocol, no idle rate */
+            return tud_control_xfer(rhport, req, s.ctrl, 1);
+        }
+        return true;
+    default: return false;
+    }
+}
+
+static bool pad_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes)
+{
+    if (ep_addr == PAD_EP_OUT) {
+        if (result == XFER_RESULT_SUCCESS && xferred_bytes) {
+            uint8_t data[PAD_EP_SIZE];
+            memcpy(data, s_buf.out, xferred_bytes);
+            usbd_edpt_xfer(rhport, PAD_EP_OUT, s_buf.out, PAD_EP_SIZE, false);
+            on_output(data, xferred_bytes);
+        } else {
+            usbd_edpt_xfer(rhport, PAD_EP_OUT, s_buf.out, PAD_EP_SIZE, false);
+        }
+    } else if (ep_addr == PAD_EP_IN) {
         try_send();
     }
     return true;
 }
 
-static const usbd_class_driver_t s_xinput = {
-    .name = "XINPUT",
-    .init = xinput_init,
-    .deinit = xinput_deinit,
-    .reset = xinput_reset,
-    .open = xinput_open,
-    .control_xfer_cb = xinput_control_xfer_cb,
-    .xfer_cb = xinput_xfer_cb,
+static const usbd_class_driver_t s_pad_driver = {
+    .name = "PAD",
+    .init = pad_init,
+    .deinit = pad_deinit,
+    .reset = pad_reset_cb,
+    .open = pad_open,
+    .control_xfer_cb = pad_control_xfer_cb,
+    .xfer_cb = pad_xfer_cb,
     .sof = NULL,
 };
-static bool s_audio;
 
 usbd_class_driver_t const *usbd_app_driver_get_cb(uint8_t *driver_count)
 {
     static usbd_class_driver_t drivers[2];
-    drivers[0] = s_xinput;
+    drivers[0] = s_pad_driver;
     drivers[1] = usb_audio_driver;
-    *driver_count = s_audio ? 2 : 1;
+    *driver_count = s.audio ? 2 : 1;
     return drivers;
 }
 
 /* ---- API ---------------------------------------------------------------------------- */
 
+const char *usb_pad_mode_name(usb_pad_mode_t mode)
+{
+    return pad_mode_info(mode)->name;
+}
+
+usb_pad_mode_t usb_pad_mode(void)
+{
+    return s.mode;
+}
+
 void usb_pad_send(const usb_pad_state_t *st)
 {
-    uint8_t r[XINPUT_REPORT_LEN] = {0x00, XINPUT_REPORT_LEN};
-    r[2] = st->buttons & 0xFF, r[3] = st->buttons >> 8;
-    r[4] = st->lt, r[5] = st->rt;
-    const int16_t axes[4] = {st->lx, st->ly, st->rx, st->ry};
-    for (int i = 0; i < 4; i++) {
-        r[6 + 2 * i] = (uint16_t)axes[i] & 0xFF;
-        r[7 + 2 * i] = (uint16_t)axes[i] >> 8;
-    }
+    if (!s.lock) return;
     xSemaphoreTake(s.lock, portMAX_DELAY);
-    memcpy(s.report, r, sizeof(r));
+    s.state = *st;
     s.dirty = true;
     xSemaphoreGive(s.lock);
     try_send();
@@ -282,27 +378,60 @@ static void on_event(tinyusb_event_t *event, void *arg)
     }
 }
 
-esp_err_t usb_pad_start(usb_pad_rumble_cb_t rumble_cb, void *arg, bool audio)
+static esp_err_t install(void)
 {
-    s_audio = audio && usb_audio_init();
-    s.lock = xSemaphoreCreateMutex();
-    if (!s.lock) return ESP_ERR_NO_MEM;
-    s.rumble_cb = rumble_cb;
-    s.rumble_arg = arg;
-    s.report[1] = XINPUT_REPORT_LEN;
+    build_descriptors();
     tinyusb_config_t cfg = TINYUSB_DEFAULT_CONFIG(on_event);
-    cfg.descriptor.device = s_audio ? &s_device_audio : &s_device;
-    cfg.descriptor.qualifier = s_audio ? &s_qualifier_audio : &s_qualifier;
+    cfg.descriptor.device = &s.device;
+    cfg.descriptor.qualifier = &s.qualifier;
     cfg.descriptor.string = s_strings;
     cfg.descriptor.string_count = sizeof(s_strings) / sizeof(s_strings[0]);
-    cfg.descriptor.full_speed_config = s_audio ? s_config_audio_fs : s_config_fs;
-    cfg.descriptor.high_speed_config = s_audio ? s_config_audio_hs : s_config_hs;
+    cfg.descriptor.full_speed_config = s.config_fs;
+    cfg.descriptor.high_speed_config = s.config_hs;
     esp_err_t err = tinyusb_driver_install(&cfg);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Xbox 360 style gamepad%s on the high-speed USB-C port",
-                 s_audio ? " and USB headphones (48 kHz stereo)" : "");
+        ESP_LOGI(TAG, "%s gamepad%s on the high-speed USB-C port", pad_mode_info(s.mode)->name,
+                 s.audio ? " and USB headphones (48 kHz stereo)" : "");
     } else {
         ESP_LOGE(TAG, "TinyUSB install failed: %s", esp_err_to_name(err));
     }
     return err;
+}
+
+esp_err_t usb_pad_start(usb_pad_mode_t mode, usb_pad_rumble_cb_t rumble_cb, void *arg, bool audio)
+{
+    s.lock = xSemaphoreCreateMutex();
+    s.config_fs = malloc(CONFIG_MAX);
+    s.config_hs = malloc(CONFIG_MAX);
+    if (!s.lock || !s.config_fs || !s.config_hs) return ESP_ERR_NO_MEM;
+    s.mode = mode < USB_PAD_MODE_COUNT ? mode : USB_PAD_XINPUT;
+    s.audio_ok = audio && usb_audio_init();
+    s.rumble_cb = rumble_cb;
+    s.rumble_arg = arg;
+    return install();
+}
+
+esp_err_t usb_pad_set_mode(usb_pad_mode_t mode)
+{
+    if (mode >= USB_PAD_MODE_COUNT || mode == s.mode) return ESP_OK;
+    ESP_LOGI(TAG, "switching to %s: leaving the bus", pad_mode_info(mode)->name);
+    s.open = false;
+    vTaskDelay(pdMS_TO_TICKS(20)); /* let a try_send() in flight finish */
+    esp_err_t err = tinyusb_driver_uninstall();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "TinyUSB uninstall failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    vTaskDelay(pdMS_TO_TICKS(200)); /* long enough for the host to see the device go */
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    s.mode = mode;
+    s.reply_len = 0;
+    s.dirty = true;
+    pad_reset();
+    xSemaphoreGive(s.lock);
+    if (s.large || s.small) {
+        s.large = s.small = 0;
+        if (s.rumble_cb) s.rumble_cb(0, 0, s.rumble_arg);
+    }
+    return install();
 }

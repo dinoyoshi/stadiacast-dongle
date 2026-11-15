@@ -176,6 +176,25 @@ silence and the gamepad goes back to neutral (and the LED back to slow blinking)
 stays held. Waking the controller again reconnects it, as does unplugging and replugging the
 dongle. The LED is GPIO3; `idf.py menuconfig` → *Stadiacast dongle* moves or turns it off.
 
+## Controller modes
+
+The dongle can be four kinds of USB controller. Hold the **Stadia button with a face button for
+2 s**: the board leaves USB, comes back as the new controller, and pulses the controller's
+motors once per mode number. It remembers the choice for the next power-up.
+
+| combo | mode | for | rumble | headphones |
+|---|---|---|---|---|
+| Stadia + A | Xbox 360 (045E:028E, XInput), the default | Windows, Linux, SteamOS, Android | yes | yes |
+| Stadia + B | DualShock 4 (054C:09CC) | PC games and Steam with PlayStation prompts; not a real PS4, which checks for Sony hardware | yes | yes |
+| Stadia + X | Switch Pro Controller (057E:2009) | Nintendo Switch (wired), Steam, Linux | yes | no |
+| Stadia + Y | HID gamepad | macOS, Android, older DirectInput games | no | yes |
+
+Buttons map by position: the bottom face button is Xbox A, PlayStation cross and Nintendo B.
+Capture is the DualShock 4's touchpad click and the Switch's Capture button; the Stadia button is
+Guide / PS / Home. On the Switch, turn on *System Settings → Controllers and Sensors → Pro
+Controller Wired Communication*. `idf.py menuconfig` → *Stadiacast dongle* sets the mode for the
+first power-up.
+
 ## Testing on a PC
 
 `components/stadia/` is plain C on BSD sockets and mbedTLS, so it also builds for Linux and
