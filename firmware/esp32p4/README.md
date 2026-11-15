@@ -7,7 +7,7 @@ The Python code at the top of this repository stays as the reference implementat
 
 | step | what | status |
 |---|---|---|
-| 1 | PC baseline ([docs/step1-baseline.md](docs/step1-baseline.md)) and the C6 hotspot with a DNS sink | this build |
+| 1 | PC baseline ([docs/step1-baseline.md](docs/step1-baseline.md)) and the C6 hotspot with a DNS sink | done: tested on the board, the controller joins and resolves through it |
 | 2 | HTTPS endpoints, GMsg, STUN/DTLS up to READY: input on the serial log | next |
 | 3 | USB gamepad (Xbox 360 style) and rumble | |
 | 4 | USB sound card feeding the controller's headset jack | |

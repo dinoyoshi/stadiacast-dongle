@@ -28,3 +28,6 @@ CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
 # The controller only reaches the board, never the internet: answer DNS ourselves
 CONFIG_LWIP_DHCPS=y
 CONFIG_LWIP_MAX_SOCKETS=16
+
+# ESP-Hosted recommends a 1 ms tick
+CONFIG_FREERTOS_HZ=1000
