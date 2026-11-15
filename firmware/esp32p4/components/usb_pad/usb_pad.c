@@ -10,6 +10,14 @@
  *
  * With audio the device is composite (class EF/02/01): the gamepad stays interface 0 and the
  * UAC2 headphones of usb_audio.c are interfaces 1 and 2, behind an interface association.
+ *
+ * Xbox 360 with audio on Windows: xusb22.inf lists 045E:028E as a hardware ID of the whole
+ * device, so Windows' Xbox driver takes the entire composite device and the headphones never get
+ * a driver (Linux's xpad binds per interface, so it never showed there). In that combination the
+ * dongle therefore uses another ID (XINPUT_AUDIO_VID/PID): Windows then loads its composite
+ * driver, which gives interface 0 to the Xbox driver through the "XUSB10" compatible ID in a
+ * Microsoft OS 2.0 descriptor (BOS, bcdUSB 2.10) and interfaces 1-2 to usbaudio2. Linux's xpad
+ * binds any FF/5D/01 interface from the pid.codes vendor, so Linux keeps working.
  * Changing the mode takes the device off the bus (TinyUSB uninstalled) and brings it back with
  * the new descriptors.
  */
@@ -36,6 +44,16 @@ static const char *TAG = "usb_pad";
 #define PAD_EP_SIZE 64
 #define CONFIG_MAX 256
 
+/* Xbox 360 with the headphones: an ID no Windows driver claims for the whole device. pid.codes'
+ * test PID; xpad matches vendor 1209 with an FF/5D/01 interface (Linux 5.12+). */
+#define XINPUT_AUDIO_VID 0x1209
+#define XINPUT_AUDIO_PID 0x0001
+
+/* Microsoft OS 2.0: the request Windows sends for the descriptor set (any free vendor code) */
+#define MSOS_VENDOR_CODE 0x20
+#define MSOS_SET_LEN (10 + 8 + 8 + 20)
+#define BOS_LEN (TUD_BOS_DESC_LEN + TUD_BOS_MICROSOFT_OS_DESC_LEN)
+
 /* ---- descriptors -------------------------------------------------------------------- */
 
 static const char *s_strings[] = {
@@ -45,6 +63,25 @@ static const char *s_strings[] = {
     NULL, /* serial: from the chip's MAC */
     "Controller headset",
 };
+
+/* The binary device object store: one capability, the Microsoft OS 2.0 platform descriptor. */
+static const uint8_t s_bos[] = {
+    TUD_BOS_DESCRIPTOR(BOS_LEN, 1),
+    TUD_BOS_MS_OS_20_DESCRIPTOR(MSOS_SET_LEN, MSOS_VENDOR_CODE),
+};
+
+/* The descriptor set: configuration 0, the function starting at interface 0 (the gamepad) is
+ * compatible with "XUSB10", the ID xusb22.inf matches as USB\MS_COMP_XUSB10. */
+static const uint8_t s_msos[] = {
+    U16_TO_U8S_LE(10), U16_TO_U8S_LE(MS_OS_20_SET_HEADER_DESCRIPTOR), U32_TO_U8S_LE(0x06030000),
+    U16_TO_U8S_LE(MSOS_SET_LEN),
+    U16_TO_U8S_LE(8), U16_TO_U8S_LE(MS_OS_20_SUBSET_HEADER_CONFIGURATION), 0, 0, U16_TO_U8S_LE(MSOS_SET_LEN - 10),
+    U16_TO_U8S_LE(8), U16_TO_U8S_LE(MS_OS_20_SUBSET_HEADER_FUNCTION), 0, 0, U16_TO_U8S_LE(MSOS_SET_LEN - 10 - 8),
+    U16_TO_U8S_LE(20), U16_TO_U8S_LE(MS_OS_20_FEATURE_COMPATBLE_ID), 'X', 'U', 'S', 'B', '1', '0', 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+};
+_Static_assert(sizeof(s_bos) == BOS_LEN, "BOS length");
+_Static_assert(sizeof(s_msos) == MSOS_SET_LEN, "MS OS 2.0 descriptor set length");
 
 static const uint8_t s_audio_fs[] = {USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_FS)};
 static const uint8_t s_audio_hs[] = {USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_HS)};
@@ -62,6 +99,7 @@ CFG_TUD_MEM_SECTION static pad_epbuf_t s_buf;
 static struct {
     usb_pad_mode_t mode;
     bool audio_ok, audio; /* audio_ok: the headphones can work; audio: in this mode's descriptors */
+    bool msos;            /* the BOS and Microsoft OS 2.0 descriptors are on (Xbox 360 + audio) */
     uint8_t rhport;
     volatile bool open;
     SemaphoreHandle_t lock;
@@ -86,16 +124,17 @@ static void build_descriptors(void)
     uint8_t cls = s.audio ? TUSB_CLASS_MISC : (m->report_desc ? 0x00 : 0xFF);
     uint8_t sub = s.audio ? MISC_SUBCLASS_COMMON : (m->report_desc ? 0x00 : 0xFF);
     uint8_t proto = s.audio ? MISC_PROTOCOL_IAD : (m->report_desc ? 0x00 : 0xFF);
+    s.msos = s.audio && !m->report_desc;
     s.device = (tusb_desc_device_t){
         .bLength = sizeof(tusb_desc_device_t),
         .bDescriptorType = TUSB_DESC_DEVICE,
-        .bcdUSB = 0x0200,
+        .bcdUSB = s.msos ? 0x0210 : 0x0200, /* 2.10: the host reads the BOS */
         .bDeviceClass = cls,
         .bDeviceSubClass = sub,
         .bDeviceProtocol = proto,
         .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
-        .idVendor = m->vid,
-        .idProduct = m->pid,
+        .idVendor = s.msos ? XINPUT_AUDIO_VID : m->vid,
+        .idProduct = s.msos ? XINPUT_AUDIO_PID : m->pid,
         .bcdDevice = m->bcd,
         .iManufacturer = 1,
         .iProduct = 2,
@@ -105,7 +144,7 @@ static void build_descriptors(void)
     s.qualifier = (tusb_desc_device_qualifier_t){
         .bLength = sizeof(tusb_desc_device_qualifier_t),
         .bDescriptorType = TUSB_DESC_DEVICE_QUALIFIER,
-        .bcdUSB = 0x0200,
+        .bcdUSB = s.device.bcdUSB,
         .bDeviceClass = cls,
         .bDeviceSubClass = sub,
         .bDeviceProtocol = proto,
@@ -331,6 +370,25 @@ static const usbd_class_driver_t s_pad_driver = {
     .sof = NULL,
 };
 
+/* ---- Microsoft OS 2.0 (TinyUSB's weak callbacks) ------------------------------------- */
+
+uint8_t const *tud_descriptor_bos_cb(void)
+{
+    return s.msos ? s_bos : NULL;
+}
+
+/* Every vendor-type request comes here first: Windows' request for the descriptor set; the rest
+ * (the XUSB vendor requests) stall as before. */
+bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *req)
+{
+    if (!s.msos || req->bRequest != MSOS_VENDOR_CODE || req->wIndex != 7 ||
+        req->bmRequestType_bit.direction != TUSB_DIR_IN) {
+        return false;
+    }
+    if (stage != CONTROL_STAGE_SETUP) return true;
+    return tud_control_xfer(rhport, req, (void *)s_msos, sizeof(s_msos));
+}
+
 usbd_class_driver_t const *usbd_app_driver_get_cb(uint8_t *driver_count)
 {
     static usbd_class_driver_t drivers[2];
@@ -390,8 +448,8 @@ static esp_err_t install(void)
     cfg.descriptor.high_speed_config = s.config_hs;
     esp_err_t err = tinyusb_driver_install(&cfg);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "%s gamepad%s on the high-speed USB-C port", pad_mode_info(s.mode)->name,
-                 s.audio ? " and USB headphones (48 kHz stereo)" : "");
+        ESP_LOGI(TAG, "%s gamepad%s on the high-speed USB-C port (%04X:%04X)", pad_mode_info(s.mode)->name,
+                 s.audio ? " and USB headphones (48 kHz stereo)" : "", s.device.idVendor, s.device.idProduct);
     } else {
         ESP_LOGE(TAG, "TinyUSB install failed: %s", esp_err_to_name(err));
     }
