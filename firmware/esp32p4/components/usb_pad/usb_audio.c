@@ -33,9 +33,6 @@ typedef struct {
 
 CFG_TUD_MEM_SECTION static uac_epbuf_t s_buf;
 
-static StaticStreamBuffer_t s_ring_ctl;
-static uint8_t s_ring_mem[RING_BYTES + 1];
-
 static struct {
     StreamBufferHandle_t ring;
     uint8_t rhport;
@@ -57,7 +54,9 @@ static void update_gain(void)
 
 bool usb_audio_init(void)
 {
-    U.ring = xStreamBufferCreateStatic(RING_BYTES, 480 * 4, s_ring_mem, &s_ring_ctl); /* wake the reader per 10 ms */
+    /* From the heap, not .bss: on v1.x P4 chips .bss eats into the small RAM pool the system
+     * starts from (see c6_update.c). Internal RAM, as the USB ISR writes it. */
+    U.ring = xStreamBufferCreate(RING_BYTES, 480 * 4); /* wake the reader per 10 ms */
     U.volume = 0;
     update_gain();
     return U.ring != NULL;

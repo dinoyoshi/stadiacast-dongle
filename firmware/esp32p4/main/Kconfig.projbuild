@@ -34,4 +34,12 @@ config DONGLE_OPUS_COMPLEXITY
         Higher is better sound for more CPU time per 20 ms frame. The serial log prints the
         encode time every 10 s while audio plays.
 
+config DONGLE_STATUS_LED_GPIO
+    int "Status LED GPIO (-1 for none)"
+    range -1 54
+    default 3
+    help
+        The FireBeetle 2 ESP32-P4's own LED is on GPIO3. Fast blink: starting up. Slow blink:
+        ready, wake the controller. Steady: the controller is connected.
+
 endmenu

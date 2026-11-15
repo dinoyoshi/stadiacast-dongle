@@ -160,6 +160,22 @@ update leaves it working. This changes the partition table (a 3 MB app, the 2 MB
 partition): an existing `sdkconfig` from an earlier step needs `CONFIG_PARTITION_TABLE_CUSTOM=y`
 (or delete it and let `sdkconfig.defaults` apply).
 
+## Using it on its own
+
+Once flashed, the dongle needs only the **high-speed USB-C port (OTG)**: it powers the board and
+carries the gamepad and the headphones. The programming port, the serial console and the PC
+tools are only for flashing and debugging. The controller has to be provisioned for the
+hotspot once ([docs/step1-baseline.md](docs/step1-baseline.md)); after that:
+
+1. Plug the dongle into the PC, console or phone. The LED blinks fast while it starts.
+2. When it blinks slowly (about 5 s after power-up), wake the controller with the Stadia button.
+3. The LED stays on while the controller is connected: buttons, rumble and headset audio work.
+
+When the controller sleeps or its battery dies, the board closes its session after 10 s of
+silence and the gamepad goes back to neutral (and the LED back to slow blinking), so nothing
+stays held. Waking the controller again reconnects it, as does unplugging and replugging the
+dongle. The LED is GPIO3; `idf.py menuconfig` → *Stadiacast dongle* moves or turns it off.
+
 ## Testing on a PC
 
 `components/stadia/` is plain C on BSD sockets and mbedTLS, so it also builds for Linux and
