@@ -10,7 +10,7 @@ The Python code at the top of this repository stays as the reference implementat
 | 1 | PC baseline ([docs/step1-baseline.md](docs/step1-baseline.md)) and the C6 hotspot with a DNS sink | done: tested on the board, the controller joins and resolves through it |
 | 2a | HTTPS with the built-in certificate, the boot endpoints, discovery RPCs and GMsg: the controller receives our WebRTC answer | done: tested on the board |
 | 2b | STUN/DTLS on UDP 40000, display RPCs up to READY: input on the serial log | done: tested on the board, button names match |
-| 3 | StartGame and the game session on UDP 40001; a USB Xbox 360 controller with rumble | this build: passes the PC loopback test |
+| 3 | StartGame and the game session on UDP 40001; a USB Xbox 360 controller with rumble | done: tested on the board with Linux (xpad): all inputs, rumble held 8 s |
 | 4 | USB sound card feeding the controller's headset jack | |
 
 ## Build and flash
