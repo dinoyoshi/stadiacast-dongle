@@ -14,6 +14,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_app_desc.h"
@@ -85,10 +86,14 @@ static void remember_try(const char *version)
 
 static bool send_image(const esp_partition_t *part, size_t len)
 {
-    static uint8_t chunk[CHUNK];
+    /* Heap, not a static buffer: on v1.x P4 chips every byte of .bss comes out of the
+     * small RAM pool the system starts from, and 1.4 KB more stopped the board booting. */
+    uint8_t *chunk = malloc(CHUNK);
+    if (!chunk) return false;
     esp_err_t err = esp_hosted_slave_ota_begin();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "OTA begin: %s", esp_err_to_name(err));
+        free(chunk);
         return false;
     }
     int last_pct = -1;
@@ -98,12 +103,14 @@ static bool send_image(const esp_partition_t *part, size_t len)
             (err = esp_hosted_slave_ota_write(chunk, (uint32_t)n)) != ESP_OK) {
             ESP_LOGE(TAG, "OTA write at %u: %s", (unsigned)off, esp_err_to_name(err));
             esp_hosted_slave_ota_end();
+            free(chunk);
             return false;
         }
         int pct = (int)((off + n) * 100 / len);
         if (pct / 10 != last_pct / 10) ESP_LOGI(TAG, "%d%%", pct);
         last_pct = pct;
     }
+    free(chunk);
     if ((err = esp_hosted_slave_ota_end()) != ESP_OK) {
         ESP_LOGE(TAG, "OTA end (the C6 rejected the image): %s", esp_err_to_name(err));
         return false;

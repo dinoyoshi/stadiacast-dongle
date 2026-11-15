@@ -143,7 +143,7 @@ built with the 2.13 host side. The board can bring the C6 up to the P4's version
 the same SDIO link (no extra wiring):
 
 1. Build `network_adapter.bin` for the C6 and put it in `c6_fw/` ([c6_fw/README.md](c6_fw/README.md)).
-2. `idf.py build flash`: the image goes to the P4's `c6_fw` partition along with the app.
+2. `idf.py build flash`: the image goes to the P4's `c6_fw` partition along with the app. If this build folder was configured before the .bin was there, run `idf.py reconfigure` first (the build prints "C6 firmware: ... goes to the c6_fw partition" when it is picked up).
 3. At boot the P4 compares versions and, if they differ, updates the C6 (about a minute), then
    restarts:
 
