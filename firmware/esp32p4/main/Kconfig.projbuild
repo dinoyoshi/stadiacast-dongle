@@ -34,6 +34,24 @@ config DONGLE_OPUS_COMPLEXITY
         Higher is better sound for more CPU time per 20 ms frame. The serial log prints the
         encode time every 10 s while audio plays.
 
+config DONGLE_USB_MIC
+    bool "Pass the controller's microphone to the USB headset"
+    default y
+    depends on DONGLE_USB_AUDIO
+    help
+        Decode the audio the controller sends (Opus over SRTP, on either WebRTC link) and play it
+        as the USB headset's microphone (48 kHz mono). The USB microphone is there either way;
+        without this it stays silent.
+
+config DONGLE_MIC_REQUEST
+    bool "Ask for the microphone in SetAudioMode (experimental)"
+    default y
+    depends on DONGLE_USB_MIC
+    help
+        Set the SetAudioModeRequest's f2 flag, whose meaning is not known yet: our guess for
+        "send the microphone". If the controller refuses the request with it, the board asks
+        again without it, so the headphones keep working.
+
 config DONGLE_PAD_MODE
     int "Gamepad mode at first power-up (0 Xbox 360, 1 DualShock 4, 2 Switch Pro, 3 HID)"
     range 0 3

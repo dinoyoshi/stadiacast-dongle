@@ -8,12 +8,14 @@
  *            answered with the game link's parameters (game.c)
  *   audio    SetAudioModeRequest(mode 2) at READY, then the headset frames as SRTP on the
  *            display link's pair (audio.c)
+ *   mic      whatever the controller sends as SRTP media, to the microphone decoder (mic.c)
  *
  * Everything on the sockets runs in one task, so only the remote descriptions and the
  * callbacks need the lock.
  */
 #include "game.h"
 #include "audio.h"
+#include "mic.h"
 #include "rtc_link.h"
 #include "stadia_internal.h"
 #include "stadia_pb.h"
@@ -60,6 +62,8 @@ static struct {
     char game_key[24];
     /* SetAudioMode */
     bool audio_sent, audio_answered;
+    bool audio_f2; /* the request in flight asks for the microphone too */
+    bool f2_refused; /* the controller refused that: ask without it from now on */
     uint32_t audio_ticket;
     int64_t audio_at;
 } D;
@@ -122,12 +126,18 @@ static void send_start_game(void)
 }
 
 /* DisplayToController #16 SetAudioModeRequest {1 mode: 2, 3 f3: true}: the WebRTC Opus route to
- * the headset jack. Without it the controller takes the RTP and plays nothing. */
+ * the headset jack. Without it the controller takes the RTP and plays nothing.
+ *
+ * With g_cfg.mic_request it also sets f2, the request's one other (bool) field. Its meaning is
+ * not known; it is our best guess for "and send me the microphone", next to f3 for the
+ * headphones. If the controller refuses the request with f2, it is asked again without. */
 static void send_set_audio_mode(void)
 {
     uint8_t am[8], msg[16];
     pbw_t a = PBW(am, sizeof(am));
     pbw_uint(&a, 1, AUDIO_MODE_WEBRTC_OPUS);
+    D.audio_f2 = g_cfg.mic_request && !D.f2_refused;
+    if (D.audio_f2) pbw_uint(&a, 2, 1);
     pbw_uint(&a, 3, 1);
     pbw_t m = PBW(msg, sizeof(msg));
     pbw_bytes(&m, D2C_SET_AUDIO_MODE, a.buf, a.len);
@@ -136,7 +146,7 @@ static void send_set_audio_mode(void)
     D.audio_sent = true;
     D.audio_answered = false;
     send_rpc(1, D.audio_ticket, 0, NULL, m.buf, m.len);
-    SLOGI(TAG, "SetAudioMode(WebRTC Opus) sent");
+    SLOGI(TAG, "SetAudioMode(WebRTC Opus%s) sent", D.audio_f2 ? ", f2 = microphone?" : "");
 }
 
 static int32_t zigzag(uint64_t v)
@@ -275,7 +285,14 @@ static void on_rpc(const uint8_t *data, size_t len)
         }
     } else if (rpc.kind == 2 && D.audio_sent && rpc.ticket == D.audio_ticket) {
         /* a repeat in the same boot is FAILED_PRECONDITION ("already in WebRTC Opus mode"): open too */
-        SLOGI(TAG, "SetAudioMode answered: code %u%s", (unsigned)rpc.code, rpc.code == 9 ? " (already open)" : "");
+        SLOGI(TAG, "SetAudioMode%s answered: code %u%s", D.audio_f2 ? " with f2" : "", (unsigned)rpc.code,
+              rpc.code == 9 ? " (already open)" : "");
+        if (rpc.code != 0 && rpc.code != 9 && D.audio_f2) {
+            SLOGW(TAG, "the controller refuses SetAudioMode with f2: asking without it");
+            D.f2_refused = true;
+            send_set_audio_mode();
+            return;
+        }
         D.audio_answered = true;
     } else if (rpc.kind == 2 && D.start_sent && rpc.ticket == D.start_ticket) {
         char msg[96] = "";
@@ -366,10 +383,16 @@ static void display_on_closed(rtc_link_t *L)
     pad_report(&released, "rtc");
 }
 
+static void display_on_media(rtc_link_t *L, const uint8_t *rtp, size_t n)
+{
+    mic_on_rtp(L, 0, rtp, n);
+}
+
 static const rtc_link_ops_t DISPLAY_OPS = {
     .on_connected = display_on_connected,
     .on_closed = display_on_closed,
     .on_wire = display_on_wire,
+    .on_media = display_on_media,
 };
 
 /* ---- the task ----------------------------------------------------------------------- */
@@ -434,6 +457,7 @@ bool rtc_start(uint16_t display_port, uint16_t game_port)
 {
     if (!rtc_link_global_init()) return false;
     audio_init(&g_cfg);
+    if (g_cfg.mic) mic_init();
     if (!rtc_link_init(&D.link, "display", display_port, &DISPLAY_OPS)) return false;
     const rtc_identity_t *id = rtc_identity();
     rtc_link_set_credentials(&D.link, id->ufrag, id->pwd);

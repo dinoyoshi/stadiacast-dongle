@@ -1,7 +1,7 @@
 include(${CMAKE_CURRENT_LIST_DIR}/embed_certs.cmake)
 stadia_embed_certs(${CMAKE_CURRENT_LIST_DIR}/certs ${CMAKE_CURRENT_BINARY_DIR}/gen)
 
-set(STADIA_CORE_SRCS pb.c https.c receiver.c signaling.c rtc_identity.c rtc.c rtc_link.c game.c audio.c srtp.c dns_sink.c sntp.c)
+set(STADIA_CORE_SRCS pb.c https.c receiver.c signaling.c rtc_identity.c rtc.c rtc_link.c game.c audio.c mic.c srtp.c dns_sink.c sntp.c)
 
 idf_component_register(
     SRCS ${STADIA_CORE_SRCS} port_esp.c

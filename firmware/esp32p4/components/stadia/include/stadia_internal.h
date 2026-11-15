@@ -54,6 +54,9 @@ typedef struct {
     int candidates;
     char cand_ip[4][16];
     uint16_t cand_port[4];
+    /* what the offer says about the controller's own audio (its microphone, as far as we know) */
+    uint32_t audio_ssrc;
+    uint32_t audio_codec, audio_channels, audio_rate; /* the first audio_format */
 } remote_offer_t;
 
 /* What an answer echoes from the offer (pointers into the offer's buffer). */

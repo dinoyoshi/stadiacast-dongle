@@ -331,6 +331,9 @@ static void dtls_reset(rtc_link_t *L)
     }
     L->dtls_on = L->dtls_up = L->srtp_ready = false;
     srtp_tx_free(&L->srtp_out);
+    srtp_rx_free(&L->srtp_in);
+    L->in_ssrc = 0;
+    L->media_in = L->rtcp_in = L->srtp_fail = 0;
     L->timer_fin = 0;
     if (was_up && L->ops->on_closed) L->ops->on_closed(L);
 }
@@ -389,6 +392,8 @@ static void on_dtls_connected(rtc_link_t *L)
                                             sizeof(L->randbytes), L->srtp_keys, sizeof(L->srtp_keys)) == 0;
         /* we are the DTLS server: our packets use the server write key (16..32) and salt (46..60) */
         if (L->srtp_ready) srtp_tx_init(&L->srtp_out, L->srtp_keys + 16, L->srtp_keys + 46);
+        /* and the controller's media (its microphone) the client write key (0..16) and salt (32..46) */
+        if (L->srtp_ready) srtp_rx_init(&L->srtp_in, L->srtp_keys, L->srtp_keys + 32);
     }
     SLOGI(TAG, "%s: DTLS connected: %s, SRTP %s, peer fingerprint %s", L->name, mbedtls_ssl_get_ciphersuite(&L->ssl),
           L->srtp_ready ? "AES128_CM_SHA1_80 keys exported" : "not negotiated", fp_ok ? "verified" : "MISMATCH");
@@ -591,6 +596,49 @@ static void take_remote(rtc_link_t *L)
     SLOGI(TAG, "%s: remote description set: ufrag %s, %d candidate(s)", L->name, L->remote.ufrag, L->ncand);
 }
 
+/* SRTP / SRTCP from the controller (RFC 7983: first byte 128..191): the media it sends besides
+ * the DTLS records, its microphone. Nothing like it is documented, so every new SSRC is logged
+ * with its payload type and size, and SRTCP is only counted. The buffer is the task's own, so
+ * the RTP is decrypted in place. */
+static void handle_media(rtc_link_t *L, const uint8_t *cbuf, size_t n, const struct sockaddr_in *from)
+{
+    uint8_t *buf = (uint8_t *)cbuf;
+    bool rtcp = n >= 2 && buf[1] >= 192 && buf[1] <= 223;
+    if (!L->selected || !same_addr(from, &L->peer)) {
+        if (L->stray_logged++ < 3) {
+            SLOGI(TAG, "%s: %s from a peer that is not the selected pair (%u bytes)", L->name, rtcp ? "RTCP" : "RTP",
+                  (unsigned)n);
+        }
+        return;
+    }
+    if (rtcp) {
+        if (L->rtcp_in++ < 3) {
+            SLOGI(TAG, "%s: SRTCP from the controller: PT %u, %u bytes, SSRC %02x%02x%02x%02x", L->name, buf[1],
+                  (unsigned)n, buf[4], buf[5], buf[6], buf[7]);
+        }
+        return;
+    }
+    if (n < 12 || !L->srtp_ready) return;
+    uint32_t ssrc = (uint32_t)buf[8] << 24 | (uint32_t)buf[9] << 16 | (uint32_t)buf[10] << 8 | buf[11];
+    if (ssrc != L->in_ssrc) { /* a new stream: its own rollover counter */
+        SLOGI(TAG, "%s: media from the controller: SSRC %08x, PT %u, seq %u, %u bytes", L->name, (unsigned)ssrc,
+              buf[1] & 0x7F, (unsigned)(buf[2] << 8 | buf[3]), (unsigned)n);
+        L->in_ssrc = ssrc;
+        L->srtp_in.roc = 0;
+        L->srtp_in.last_seq = -1;
+    }
+    size_t len = srtp_unprotect(&L->srtp_in, buf, n);
+    if (!len) {
+        if (L->srtp_fail++ < 5) {
+            SLOGW(TAG, "%s: SRTP from the controller fails authentication (SSRC %08x, %u bytes)", L->name,
+                  (unsigned)ssrc, (unsigned)n);
+        }
+        return;
+    }
+    L->media_in++;
+    if (L->ops->on_media) L->ops->on_media(L, buf, len);
+}
+
 void rtc_link_poll(rtc_link_t *L, const uint8_t *buf, size_t n, const struct sockaddr_in *from)
 {
     take_remote(L);
@@ -609,6 +657,8 @@ void rtc_link_poll(rtc_link_t *L, const uint8_t *buf, size_t n, const struct soc
             if (!dtls_start(L)) return;
         }
         if (same_addr(from, &L->peer)) dtls_pump(L, buf, n);
+    } else if (b >= 128 && b <= 191) {
+        handle_media(L, buf, n, from);
     }
 }
 

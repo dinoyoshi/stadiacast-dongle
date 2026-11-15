@@ -4,7 +4,9 @@
  * Rumble test: pressing A starts both motors; 6 s after A is released they stop, so a held
  * level outlives the controller's 5 s haptics watchdog only through our refreshes.
  * STADIA_AUDIO=1 opens the headset audio route and plays a 440 Hz tone into it, 10 ms at a time
- * as a USB host would (the fake controller counts the frames it would play). */
+ * as a USB host would (the fake controller counts the frames it would play).
+ * STADIA_MIC=1 also decodes what the controller sends as its microphone (run the fake
+ * controller with --mic-echo: it sends the tone back) and prints the decoded tone's frequency. */
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -56,6 +58,26 @@ static void *tone_thread(void *arg)
     return NULL;
 }
 
+/* The decoded microphone: count zero crossings per second, which for the echoed 440 Hz tone
+ * should be about 880. */
+static void on_mic(const int16_t *pcm, size_t frames, void *arg)
+{
+    static long long samples, crossings, peak;
+    static int16_t prev;
+    for (size_t i = 0; i < frames; i++) {
+        if ((prev < 0) != (pcm[i] < 0)) crossings++;
+        prev = pcm[i];
+        long long a = pcm[i] < 0 ? -pcm[i] : pcm[i];
+        if (a > peak) peak = a;
+    }
+    samples += (long long)frames;
+    if (samples >= 48000 * 5) {
+        fprintf(stderr, "stadia_host: microphone %.1f s, %.0f Hz, peak %lld\n", samples / 48000.0,
+                crossings / 2.0 / (samples / 48000.0), peak);
+        samples = crossings = peak = 0;
+    }
+}
+
 int main(int argc, char **argv)
 {
     uint16_t rtc_port = (uint16_t)(argc > 3 ? atoi(argv[3]) : 40000);
@@ -67,8 +89,10 @@ int main(int argc, char **argv)
         .start_game = getenv("STADIA_START_GAME") != NULL,
         .allow_clearcut = getenv("STADIA_ALLOW_CLEARCUT") != NULL,
         .audio = getenv("STADIA_AUDIO") != NULL,
+        .mic = getenv("STADIA_MIC") != NULL,
     };
     stadia_set_pad_callback(on_pad, NULL);
+    stadia_set_mic_callback(on_mic, NULL);
     if (!stadia_start(&cfg)) {
         return 1;
     }

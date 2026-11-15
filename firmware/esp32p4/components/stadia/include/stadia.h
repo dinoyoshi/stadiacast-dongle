@@ -19,6 +19,8 @@ typedef struct {
     bool audio;               /* open the headset audio route at READY (SetAudioModeRequest mode 2) */
     uint8_t audio_complexity; /* Opus complexity 1..10; 0 = 8 */
     bool allow_clearcut;      /* false (the live preset): refuse Clearcut with a TLS alert */
+    bool mic;                 /* decode what the controller sends as media (its microphone) */
+    bool mic_request;         /* ask for it: SetAudioModeRequest with f2 set (a guess, see rtc.c) */
 } stadia_config_t;
 
 /* Start every server in its own task. False if one could not start. */
@@ -70,3 +72,8 @@ void stadia_rumble(uint16_t left, uint16_t right);
  * bytes of stack. Without a controller whose audio route is open it returns at once. */
 #define STADIA_AUDIO_STACK (48 * 1024)
 void stadia_audio_pcm(const int16_t *pcm, size_t frames);
+
+/* The controller's microphone: mono 48 kHz PCM as it is decoded, from the microphone task, in
+ * chunks of one Opus frame (usually 960 frames). The stream's own clock: the receiver buffers. */
+typedef void (*stadia_mic_cb_t)(const int16_t *pcm, size_t frames, void *arg);
+void stadia_set_mic_callback(stadia_mic_cb_t cb, void *arg);

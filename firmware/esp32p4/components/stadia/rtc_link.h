@@ -32,6 +32,9 @@ typedef struct {
     void (*on_wire)(rtc_link_t *L, uint16_t id, const uint8_t *p, size_t n);
     /* A DTLS record that is not WireHeader2 (the game session's "unframed" input). */
     void (*on_unframed)(rtc_link_t *L, const uint8_t *p, size_t n);
+    /* One RTP packet the controller sent as SRTP on the selected pair, decrypted and checked
+     * (its microphone). */
+    void (*on_media)(rtc_link_t *L, const uint8_t *rtp, size_t n);
 } rtc_link_ops_t;
 
 struct rtc_link {
@@ -68,6 +71,9 @@ struct rtc_link {
     uint8_t srtp_keys[60]; /* client key 16, server key 16, client salt 14, server salt 14 */
     bool srtp_ready;
     srtp_tx_t srtp_out; /* our media (the headset audio): the DTLS server's write key and salt */
+    srtp_rx_t srtp_in;  /* the controller's media (its microphone): the client's write key and salt */
+    uint32_t in_ssrc;   /* the controller's media stream we decrypt (0: none yet) */
+    uint32_t media_in, rtcp_in, srtp_fail, stray_logged;
     int64_t dtls_at;
     int64_t last_rx; /* the last datagram from the selected peer */
     /* our RTP stream (input acks, rumble) */

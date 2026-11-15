@@ -62,13 +62,27 @@ bool signaling_parse_offer(const uint8_t *offer, size_t len, remote_offer_t *rem
             }
             break;
         }
-        case 17: if (!echo->audio.data) echo->audio = f; break;
+        case 8: remote->audio_ssrc = (uint32_t)f.v; break;
+        case 17:
+            if (!echo->audio.data) {
+                echo->audio = f;
+                pbf_t a;
+                pbr_t ar = PBR(f.data, f.len);
+                while (pbr_next(&ar, &a)) {
+                    if (a.field == 1) remote->audio_codec = (uint32_t)a.v;
+                    if (a.field == 2) remote->audio_channels = (uint32_t)a.v;
+                    if (a.field == 3) remote->audio_rate = (uint32_t)a.v;
+                }
+            }
+            break;
         case 21: echo->raw_dtls = f.v != 0; break;
         case 23: echo->delayed_acks = f.v != 0; break;
         case 25: echo->rtp_ts = f.v != 0; break;
         }
     }
     if (!echo->video.data) echo->video = first_video;
+    SLOGI(TAG, "offer audio: SSRC %08x, codec %u, %u channel(s), %u Hz", (unsigned)remote->audio_ssrc,
+          (unsigned)remote->audio_codec, (unsigned)remote->audio_channels, (unsigned)remote->audio_rate);
     if (!remote->ufrag[0] || !remote->pwd[0]) {
         SLOGW(TAG, "the offer has no ICE credentials");
         return false;

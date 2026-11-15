@@ -12,6 +12,7 @@ The Python code at the top of this repository stays as the reference implementat
 | 2b | STUN/DTLS on UDP 40000, display RPCs up to READY: input on the serial log | done: tested on the board, button names match |
 | 3 | StartGame and the game session on UDP 40001; a USB Xbox 360 controller with rumble | done: tested on the board with Linux (xpad): all inputs, rumble held 8 s |
 | 4 | USB headphones feeding the controller's headset jack (Opus over SRTP) | done: tested on the board with Linux (PipeWire): music plays in the controller's headset |
+| 5 | USB microphone fed by the controller's headset microphone | experimental: the decode path is tested on a PC; how the controller sends its microphone is still being found out on the board |
 
 ## Build and flash
 
@@ -144,6 +145,40 @@ Microsoft OS 2.0 descriptor, and the headphones get the USB Audio 2.0 driver. Li
 1209 XInput pads too (kernel 5.12+). With the headphones turned off in menuconfig the dongle stays
 045E:028E.
 
+## Step 5: the microphone (experimental)
+
+The USB headset also has a **microphone** (48 kHz 16-bit mono, with volume from -50 to +20 dB
+and mute). Whatever the board decodes from the controller is recorded there:
+
+```
+UDP from the controller (either link) -> SRTP checked and decrypted (the controller's DTLS keys)
+  -> RTP -> Opus decoder (mono, 48 kHz; lost frames concealed) -> 40 ms buffer -> USB IN 0x82
+```
+
+How the controller sends its microphone is not documented. The board assumes it is SRTP media
+on a link's selected pair (the controller's WebRTC offers list an audio SSRC and Opus 48 kHz),
+and logs what it sees so a run can tell:
+
+```
+signaling: offer audio: SSRC 00000457, codec 1, 2 channel(s), 48000 Hz
+rtc: SetAudioMode(WebRTC Opus, f2 = microphone?) sent
+rtc: SetAudioMode with f2 answered: code 0
+rtc: display: media from the controller: SSRC ..., PT 111, seq ..., ... bytes
+mic: microphone stream on the display link: PT 111, ...-byte packets, 960 samples each
+mic: 500 packets in 10 s (display 500, game 0), 500 decoded, 0 lost, 0 errors, 0 dropped; 10000 ms of sound, peak -20 dBFS
+usb_audio: the host started recording
+usb_audio: microphone: 10000 ms in, 80000 packets out in 10 s, 0 underruns, 0 skips
+```
+
+`SetAudioModeRequest` has one bool field (`f2`) whose use is unknown; the board sets it as a
+guess for "send the microphone too", and asks again without it if the controller refuses.
+Both are menuconfig options (*Pass the controller's microphone to the USB headset*, *Ask for the
+microphone in SetAudioMode*). With no "media from the controller" line, the controller sent
+nothing: the microphone stays silent and the headphones work as before.
+
+The buffer follows the computer's clock: past 120 ms of backlog it skips back to 40 ms, and when
+it runs dry the computer gets silence until it has 40 ms again.
+
 ## Updating the C6 (Wi-Fi) firmware
 
 The C6 runs the ESP-Hosted slave firmware it came with (2.12 on our board), while the P4 is
@@ -226,6 +261,10 @@ With `STADIA_AUDIO=1` the host build also opens the headset audio route and play
 the fake controller (`--game`) ends with a line on what its jack got: frames played (SRTP
 checked), their SSRC, sequence gaps and timestamp steps (all 960). The host build compiles the
 same libopus as the board.
+
+With `STADIA_MIC=1` as well, and `--mic-echo` on the fake controller, the fake controller sends
+every frame it plays back as its own SRTP stream, the host build decodes it as the microphone,
+and prints the tone it hears every 5 s (`microphone 5.0 s, 440 Hz, peak 8310`).
 
 ## If the Wi-Fi doesn't come up
 

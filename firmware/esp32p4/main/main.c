@@ -11,6 +11,8 @@
  *     connected": the controller is up and its input goes to the USB gamepad
  *   - "SetAudioMode answered" and "headset audio route open": what the computer plays on the
  *     "Stadiacast Dongle" headphones goes to the controller's headset jack
+ *   - "media from the controller" and "microphone stream": the controller sends its microphone,
+ *     which the computer records from the same headset's microphone
  * The USB gamepad (an Xbox 360 controller to the host) and the USB headphones are on the
  * board's high-speed USB-C port; the other USB-C port stays the serial console and programming
  * port.
@@ -68,6 +70,14 @@ static void audio_task(void *arg)
 }
 #endif
 
+#if CONFIG_DONGLE_USB_MIC
+/* The controller's microphone, decoded, to the USB microphone. */
+static void on_mic(const int16_t *pcm, size_t frames, void *arg)
+{
+    usb_pad_mic_write(pcm, frames);
+}
+#endif
+
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -89,6 +99,9 @@ void app_main(void)
         ESP_LOGE(TAG, "no USB gamepad, see above");
     }
     stadia_set_pad_callback(on_pad, NULL);
+#if CONFIG_DONGLE_USB_MIC
+    stadia_set_mic_callback(on_mic, NULL);
+#endif
     pad_mode_start();
 
     c6_update_if_needed();
@@ -109,6 +122,12 @@ void app_main(void)
         .audio = audio,
 #if CONFIG_DONGLE_USB_AUDIO
         .audio_complexity = CONFIG_DONGLE_OPUS_COMPLEXITY,
+#endif
+#if CONFIG_DONGLE_USB_MIC
+        .mic = true,
+#endif
+#if CONFIG_DONGLE_MIC_REQUEST
+        .mic_request = true,
 #endif
     };
     if (!stadia_start(&cfg)) {
