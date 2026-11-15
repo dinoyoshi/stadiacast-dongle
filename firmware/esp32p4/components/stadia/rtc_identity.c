@@ -21,11 +21,11 @@ static rtc_identity_t s_id;
 
 static void ice_string(char *out, size_t n)
 {
-    static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     uint8_t rnd[32];
     port_random(rnd, n);
     for (size_t i = 0; i < n; i++) {
-        out[i] = alphabet[rnd[i] & 63];
+        out[i] = alphabet[rnd[i] % 62];
     }
     out[n] = '\0';
 }

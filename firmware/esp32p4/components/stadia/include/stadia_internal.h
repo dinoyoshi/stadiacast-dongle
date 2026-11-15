@@ -74,6 +74,12 @@ typedef struct {
 bool rtc_identity_init(void);
 const rtc_identity_t *rtc_identity(void);
 
+/* ---- the display link on UDP (rtc.c) ---------------------------------------------- */
+
+bool rtc_start(uint16_t port);
+/* A new offer: reset the link and start ICE towards its candidates. */
+void rtc_set_remote(const remote_offer_t *remote);
+
 /* ---- small UDP servers ------------------------------------------------------------- */
 
 bool dns_sink_start(uint16_t port, const char *answer_ip);

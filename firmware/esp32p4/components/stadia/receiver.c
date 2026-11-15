@@ -86,6 +86,7 @@ static void accept_offer(const uint8_t *bundle, size_t len)
     if (!n) {
         return;
     }
+    rtc_set_remote(&remote);
     port_lock();
     S.remote = remote;
     S.resolved = false;
@@ -286,7 +287,8 @@ bool stadia_start(const stadia_config_t *cfg)
     if (!rtc_identity_init()) {
         return false;
     }
-    bool ok = https_start(cfg->https_port);
+    bool ok = rtc_start(cfg->rtc_port);
+    ok = https_start(cfg->https_port) && ok;
     if (cfg->dns_port) ok = dns_sink_start(cfg->dns_port, cfg->advertise_ip) && ok;
     if (cfg->sntp_port) ok = sntp_start(cfg->sntp_port) && ok;
     return ok;

@@ -8,8 +8,8 @@ The Python code at the top of this repository stays as the reference implementat
 | step | what | status |
 |---|---|---|
 | 1 | PC baseline ([docs/step1-baseline.md](docs/step1-baseline.md)) and the C6 hotspot with a DNS sink | done: tested on the board, the controller joins and resolves through it |
-| 2a | HTTPS with the built-in certificate, the boot endpoints, discovery RPCs and GMsg: the controller receives our WebRTC answer | this build |
-| 2b | STUN/DTLS on UDP 40000, display RPCs up to READY: input on the serial log | next |
+| 2a | HTTPS with the built-in certificate, the boot endpoints, discovery RPCs and GMsg: the controller receives our WebRTC answer | done on PC; board: fixed the 6 KB RegisterController header |
+| 2b | STUN/DTLS on UDP 40000, display RPCs up to READY: input on the serial log | this build: passes the PC loopback test |
 | 3 | USB gamepad (Xbox 360 style) and rumble | |
 | 4 | USB sound card feeding the controller's headset jack | |
 
@@ -50,7 +50,7 @@ with `esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle-step1.bin`, or in
 [ESP Web Tool](https://espressif.github.io/esptool-js/) (address 0x0, Chrome or Edge).
 Then watch the log with any serial monitor at 115200 baud.
 
-## What step 2a should print
+## What step 2 should print
 
 After waking the controller, beyond the step 1 lines:
 
@@ -62,9 +62,16 @@ receiver: RegisterController from <id> (attempt ...) with a resumed discovery an
 signaling: offer ...: raw_dtls=1 delayed_acks=1, 1 IPv4 candidate(s); answering with 192.168.4.1:40000
 receiver: GMsg #1 delivered to stadia-local-receiver-display-0
 receiver: GMsg #1 acked
+rtc: ICE pair selected: 192.168.4.2:<port> (binding response)
+rtc: DTLS connected: TLS-ECDHE-ECDSA-..., SRTP AES128_CM_SHA1_80 keys exported, peer fingerprint verified
+receiver: ResolveDiscovery: discovery complete
+rtc: controller: <product>, hardware <hw>, firmware <fw>, headset out
+rtc: display state: ready
+rtc: input: A+ L(0,0) R(0,0) L2 0 R2 0
 ```
 
-The controller then tries ICE on UDP 40000, which step 2b answers.
+The GMsg poll after the ack is held for 20 s, so ResolveDiscovery and READY come about 20 s
+after DTLS connects, the same as the Python receiver.
 
 ## Testing on a PC
 
