@@ -136,6 +136,30 @@ audio.py's pacer does; a pause leaves a gap of the same length in the RTP timest
 runs with a DTIM period of 1, so frames for a dozing controller are not held back. On Linux,
 set the "Xbox 360 Controller" output to 100%: its volume is applied on the board.
 
+## Updating the C6 (Wi-Fi) firmware
+
+The C6 runs the ESP-Hosted slave firmware it came with (2.12 on our board), while the P4 is
+built with the 2.13 host side. The board can bring the C6 up to the P4's version itself, over
+the same SDIO link (no extra wiring):
+
+1. Build `network_adapter.bin` for the C6 and put it in `c6_fw/` ([c6_fw/README.md](c6_fw/README.md)).
+2. `idf.py build flash`: the image goes to the P4's `c6_fw` partition along with the app.
+3. At boot the P4 compares versions and, if they differ, updates the C6 (about a minute), then
+   restarts:
+
+```
+c6_update: updating the C6 from ESP-Hosted 2.12.0 to 2.13.1 (... bytes); keep the board powered
+c6_update: 10% ... 100%
+c6_update: C6 updated to 2.13.1: restarting so both sides start together
+...
+c6_update: C6 runs ESP-Hosted 2.13.1, as on the board
+```
+
+The C6 keeps its old firmware until the new one is written and verified, so an interrupted
+update leaves it working. This changes the partition table (a 3 MB app, the 2 MB `c6_fw`
+partition): an existing `sdkconfig` from an earlier step needs `CONFIG_PARTITION_TABLE_CUSTOM=y`
+(or delete it and let `sdkconfig.defaults` apply).
+
 ## Testing on a PC
 
 `components/stadia/` is plain C on BSD sockets and mbedTLS, so it also builds for Linux and
