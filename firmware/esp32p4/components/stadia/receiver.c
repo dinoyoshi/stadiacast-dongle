@@ -278,7 +278,11 @@ stadia_config_t g_cfg;
 
 bool stadia_start(const stadia_config_t *cfg)
 {
+    /* keep our own copy of the address: the caller's string may live on a stack that goes away */
+    static char advertise_ip[16];
     g_cfg = *cfg;
+    snprintf(advertise_ip, sizeof(advertise_ip), "%s", cfg->advertise_ip ? cfg->advertise_ip : "");
+    g_cfg.advertise_ip = advertise_ip;
     S.gmsg_event = port_event_new();
     if (!rtc_identity_init()) {
         return false;

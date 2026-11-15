@@ -35,7 +35,7 @@ void app_main(void)
 
     esp_netif_ip_info_t info;
     ESP_ERROR_CHECK(esp_netif_get_ip_info(ap, &info));
-    char ip[16];
+    static char ip[16];
     snprintf(ip, sizeof(ip), IPSTR, IP2STR(&info.ip));
     stadia_config_t cfg = {
         .advertise_ip = ip,

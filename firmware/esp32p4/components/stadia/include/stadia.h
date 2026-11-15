@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 typedef struct {
-    const char *advertise_ip; /* our address as the controller sees it, e.g. "192.168.4.1" */
+    const char *advertise_ip; /* our address as the controller sees it, e.g. "192.168.4.1" (copied) */
     uint16_t https_port;      /* 443 */
     uint16_t dns_port;        /* 53; 0 = no DNS sink */
     uint16_t sntp_port;       /* 123; 0 = no SNTP server */
