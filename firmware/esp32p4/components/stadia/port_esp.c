@@ -107,3 +107,12 @@ void port_log(char level, const char *tag, const char *fmt, ...)
     default: ESP_LOGI(tag, "%s", line); break;
     }
 }
+
+#include "miniz.h"
+
+size_t port_inflate(const uint8_t *src, size_t n, uint8_t *dst, size_t cap)
+{
+    size_t r = tinfl_decompress_mem_to_mem(dst, cap, src, n, TINFL_FLAG_PARSE_ZLIB_HEADER);
+    if (r == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED) r = tinfl_decompress_mem_to_mem(dst, cap, src, n, 0);
+    return r == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED ? 0 : r;
+}

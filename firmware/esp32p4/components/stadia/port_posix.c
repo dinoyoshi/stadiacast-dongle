@@ -139,3 +139,20 @@ void port_log(char level, const char *tag, const char *fmt, ...)
     clock_gettime(CLOCK_MONOTONIC, &ts);
     fprintf(stderr, "%c (%lld.%03ld) %s: %s\n", level, (long long)ts.tv_sec, ts.tv_nsec / 1000000, tag, line);
 }
+
+#include <zlib.h>
+
+size_t port_inflate(const uint8_t *src, size_t n, uint8_t *dst, size_t cap)
+{
+    for (int wbits = MAX_WBITS; wbits >= -MAX_WBITS; wbits -= 2 * MAX_WBITS) {
+        z_stream z = {0};
+        if (inflateInit2(&z, wbits) != Z_OK) return 0;
+        z.next_in = (Bytef *)src, z.avail_in = (uInt)n;
+        z.next_out = dst, z.avail_out = (uInt)cap;
+        int rc = inflate(&z, Z_FINISH);
+        size_t out = z.total_out;
+        inflateEnd(&z);
+        if (rc == Z_STREAM_END) return out;
+    }
+    return 0;
+}

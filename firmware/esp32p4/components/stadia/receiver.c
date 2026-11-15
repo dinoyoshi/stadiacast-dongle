@@ -287,7 +287,7 @@ bool stadia_start(const stadia_config_t *cfg)
     if (!rtc_identity_init()) {
         return false;
     }
-    bool ok = rtc_start(cfg->rtc_port);
+    bool ok = rtc_start(cfg->rtc_port, cfg->game_port ? cfg->game_port : cfg->rtc_port + 1);
     ok = https_start(cfg->https_port) && ok;
     if (cfg->dns_port) ok = dns_sink_start(cfg->dns_port, cfg->advertise_ip) && ok;
     if (cfg->sntp_port) ok = sntp_start(cfg->sntp_port) && ok;

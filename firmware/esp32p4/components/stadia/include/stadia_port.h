@@ -24,6 +24,8 @@ double port_wall_time(void);
 
 void port_sleep_ms(int ms);
 void port_random(void *buf, size_t len);
+/* Inflate a zlib (or else raw deflate) stream into dst. Returns the size, 0 on failure. */
+size_t port_inflate(const uint8_t *src, size_t n, uint8_t *dst, size_t cap);
 
 /* One global lock for the controller session. */
 void port_lock(void);

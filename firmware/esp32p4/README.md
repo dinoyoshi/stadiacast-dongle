@@ -8,9 +8,9 @@ The Python code at the top of this repository stays as the reference implementat
 | step | what | status |
 |---|---|---|
 | 1 | PC baseline ([docs/step1-baseline.md](docs/step1-baseline.md)) and the C6 hotspot with a DNS sink | done: tested on the board, the controller joins and resolves through it |
-| 2a | HTTPS with the built-in certificate, the boot endpoints, discovery RPCs and GMsg: the controller receives our WebRTC answer | done on PC; board: fixed the 6 KB RegisterController header |
-| 2b | STUN/DTLS on UDP 40000, display RPCs up to READY: input on the serial log | this build: passes the PC loopback test |
-| 3 | USB gamepad (Xbox 360 style) and rumble | |
+| 2a | HTTPS with the built-in certificate, the boot endpoints, discovery RPCs and GMsg: the controller receives our WebRTC answer | done: tested on the board |
+| 2b | STUN/DTLS on UDP 40000, display RPCs up to READY: input on the serial log | done: tested on the board, button names match |
+| 3 | StartGame and the game session on UDP 40001; a USB Xbox 360 controller with rumble | this build: passes the PC loopback test |
 | 4 | USB sound card feeding the controller's headset jack | |
 
 ## Build and flash
@@ -25,8 +25,8 @@ idf.py build
 idf.py -p <port> flash monitor     # the USB-C port marked for programming / CDC, not the OTG one
 ```
 
-The first build downloads `esp_hosted` and `esp_wifi_remote` from the Espressif component
-registry. `idf.py menuconfig` → *Stadiacast dongle* changes the hotspot's name, password and
+The first build downloads `esp_hosted`, `esp_wifi_remote` and `esp_tinyusb` from the Espressif
+component registry. `idf.py menuconfig` → *Stadiacast dongle* changes the hotspot's name, password and
 channel. The defaults are `stadiacast-dongle` / `stadiacast` on channel 6.
 
 ## What step 1 should print
@@ -62,16 +62,44 @@ receiver: RegisterController from <id> (attempt ...) with a resumed discovery an
 signaling: offer ...: raw_dtls=1 delayed_acks=1, 1 IPv4 candidate(s); answering with 192.168.4.1:40000
 receiver: GMsg #1 delivered to stadia-local-receiver-display-0
 receiver: GMsg #1 acked
-rtc: ICE pair selected: 192.168.4.2:<port> (binding response)
-rtc: DTLS connected: TLS-ECDHE-ECDSA-..., SRTP AES128_CM_SHA1_80 keys exported, peer fingerprint verified
+rtc: display: ICE pair selected: 192.168.4.2:<port> (binding response)
+rtc: display: DTLS connected: TLS-ECDHE-ECDSA-..., SRTP AES128_CM_SHA1_80 keys exported, peer fingerprint verified
 receiver: ResolveDiscovery: discovery complete
 rtc: controller: <product>, hardware <hw>, firmware <fw>, headset out
 rtc: display state: ready
 rtc: input: A+ L(0,0) R(0,0) L2 0 R2 0
 ```
 
-The GMsg poll after the ack is held for 20 s, so ResolveDiscovery and READY come about 20 s
-after DTLS connects, the same as the Python receiver.
+The GMsg poll after the ack is held for 20 s, so ResolveDiscovery and READY can come up to
+20 s after DTLS connects, the same as the Python receiver.
+
+## Step 3: the USB gamepad
+
+The board's **high-speed USB-C port (OTG)** is the gamepad: plug it into the PC, console or
+phone. It shows up as a wired Xbox 360 controller (045E:028E, XInput), which Windows, Linux,
+SteamOS and Android drive without anything to install. The other USB-C port stays the serial
+console. Input goes to the USB host as soon as the controller is READY; a second after READY
+the board sends StartGame, the controller opens the game session, and from then on its input
+comes from there and the host's rumble goes back to the controller's motors.
+
+```
+usb_pad: Xbox 360 style gamepad on the high-speed USB-C port
+usb_pad: XInput interface opened by the host
+...
+rtc: display state: ready
+rtc: StartGame local-... sent
+game: InitializationRequest v1 (raw_dtls=1): answering with 192.168.4.1:40001
+rtc: game: DTLS connected: ...
+game: game session connected
+rtc: StartGame answered OK after ... ms: the game session is up
+game: input framing: rtp
+game: input: A+ L(0,0) R(0,0) L2 0 R2 0
+game: rumble left 65535 right 32896
+```
+
+Mapping: the Stadia button is the Xbox (guide) button, Menu is Start, Options is Back. Assistant
+and Capture have no XInput equivalent. Sticks are passed through raw (no deadzone, as a real
+pad), triggers 0 to 255.
 
 ## Testing on a PC
 
@@ -84,6 +112,11 @@ cmake --build build-host
 STADIA_ALLOW_CLEARCUT=1 build-host/stadia_host 127.0.0.1 8443 40000 &
 uv run tests/fake_controller.py --host 127.0.0.1 --https-port 8443   # from the repository root
 ```
+
+For the game session, start the host build with `STADIA_START_GAME=1` and run the fake
+controller with `--game 12`. The host build turns pressing A into rumble and stops it 6 s after
+A is released, so the fake controller shows the motors starting, staying on through the 5 s
+haptics watchdog (our 2 s refreshes), and stopping.
 
 ## If the Wi-Fi doesn't come up
 
