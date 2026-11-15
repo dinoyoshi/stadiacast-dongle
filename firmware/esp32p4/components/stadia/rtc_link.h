@@ -6,6 +6,7 @@
  */
 #pragma once
 
+#include "srtp.h"
 #include "stadia_internal.h"
 
 #include <netinet/in.h>
@@ -66,6 +67,7 @@ struct rtc_link {
     mbedtls_tls_prf_types prf;
     uint8_t srtp_keys[60]; /* client key 16, server key 16, client salt 14, server salt 14 */
     bool srtp_ready;
+    srtp_tx_t srtp_out; /* our media (the headset audio): the DTLS server's write key and salt */
     int64_t dtls_at;
     /* our RTP stream (input acks, rumble) */
     uint16_t tx_seq;
@@ -90,6 +92,9 @@ bool rtc_link_send_wire(rtc_link_t *L, uint16_t id, const uint8_t *payload, size
 bool rtc_link_send_rtp_wire(rtc_link_t *L, uint8_t pt, const uint8_t *payload, size_t len);
 /* `payload` as a bare DTLS record. */
 bool rtc_link_send_record(rtc_link_t *L, const uint8_t *payload, size_t len);
+/* A complete RTP packet as SRTP on the selected pair (not in 0x66): the media path the
+ * headset audio takes. pkt needs SRTP_TAG_LEN bytes of room after len (cap). */
+bool rtc_link_send_srtp(rtc_link_t *L, uint8_t *pkt, size_t len, size_t cap);
 
 /* The payload of an RTP packet; false if it is not RTP (or is RTCP). */
 bool rtp_payload(const uint8_t *p, size_t len, uint8_t *pt, const uint8_t **payload, size_t *plen);

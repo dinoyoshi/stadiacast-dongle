@@ -5,8 +5,12 @@
  * FF/5D/01. Input goes out as the 20-byte report {0x00, 0x14, wButtons, LT, RT, LX, LY, RX,
  * RY, 6 x 0} on interrupt IN 0x81; rumble comes back as {0x00, 0x08, 0x00, large, small, ...}
  * on interrupt OUT 0x01 (LED patterns {0x01, 0x03, n} are ignored).
+ *
+ * With audio the device is composite (class EF/02/01): XInput stays interface 0 and the UAC2
+ * headphones of usb_audio.c are interfaces 1 and 2, behind an interface association.
  */
 #include "usb_pad.h"
+#include "usb_audio.h"
 
 #include <string.h>
 
@@ -43,6 +47,36 @@ static const tusb_desc_device_t s_device = {
     .bNumConfigurations = 1,
 };
 
+/* the same, as a composite device with the sound card */
+static const tusb_desc_device_t s_device_audio = {
+    .bLength = sizeof(tusb_desc_device_t),
+    .bDescriptorType = TUSB_DESC_DEVICE,
+    .bcdUSB = 0x0200,
+    .bDeviceClass = TUSB_CLASS_MISC,
+    .bDeviceSubClass = MISC_SUBCLASS_COMMON,
+    .bDeviceProtocol = MISC_PROTOCOL_IAD,
+    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
+    .idVendor = 0x045E,
+    .idProduct = 0x028E,
+    .bcdDevice = 0x0114,
+    .iManufacturer = 1,
+    .iProduct = 2,
+    .iSerialNumber = 3,
+    .bNumConfigurations = 1,
+};
+
+static const tusb_desc_device_qualifier_t s_qualifier_audio = {
+    .bLength = sizeof(tusb_desc_device_qualifier_t),
+    .bDescriptorType = TUSB_DESC_DEVICE_QUALIFIER,
+    .bcdUSB = 0x0200,
+    .bDeviceClass = TUSB_CLASS_MISC,
+    .bDeviceSubClass = MISC_SUBCLASS_COMMON,
+    .bDeviceProtocol = MISC_PROTOCOL_IAD,
+    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
+    .bNumConfigurations = 1,
+    .bReserved = 0,
+};
+
 static const tusb_desc_device_qualifier_t s_qualifier = {
     .bLength = sizeof(tusb_desc_device_qualifier_t),
     .bDescriptorType = TUSB_DESC_DEVICE_QUALIFIER,
@@ -55,13 +89,15 @@ static const tusb_desc_device_qualifier_t s_qualifier = {
     .bReserved = 0,
 };
 
-#define XINPUT_CONFIG_LEN (9 + 9 + 17 + 7 + 7)
+#define XINPUT_ITF_LEN (9 + 17 + 7 + 7)
+#define XINPUT_CONFIG_LEN (9 + XINPUT_ITF_LEN)
+#define AUDIO_CONFIG_LEN (XINPUT_CONFIG_LEN + USB_AUDIO_DESC_LEN)
+
+/* configuration: n interfaces, bus powered, 500 mA */
+#define CONFIG_HEADER(total, nitf) 9, TUSB_DESC_CONFIGURATION, U16_TO_U8S_LE(total), nitf, 1, 0, 0x80, 0xFA
 
 /* bInterval: full speed in frames (1 ms), high speed as 2^(n-1) microframes (4 -> 1 ms, 7 -> 8 ms). */
-#define XINPUT_CONFIG(in_interval, out_interval)                                                                      \
-    {                                                                                                                 \
-        /* configuration: 1 interface, bus powered, 500 mA */                                                         \
-        9, TUSB_DESC_CONFIGURATION, XINPUT_CONFIG_LEN, 0, 1, 1, 0, 0x80, 0xFA,                                       \
+#define XINPUT_ITF(in_interval, out_interval)                                                                         \
         /* interface 0: vendor FF/5D/01 with two endpoints */                                                         \
         9, TUSB_DESC_INTERFACE, 0, 0, 2, 0xFF, 0x5D, 0x01, 0,                                                       \
         /* the XUSB "unknown" descriptor (type 0x21) every wired 360 controller carries */                            \
@@ -69,17 +105,21 @@ static const tusb_desc_device_qualifier_t s_qualifier = {
         0x00, 0x00,                                                                                                   \
         /* interrupt IN, then interrupt OUT */                                                                        \
         7, TUSB_DESC_ENDPOINT, XINPUT_EP_IN, TUSB_XFER_INTERRUPT, XINPUT_EP_SIZE, 0, (in_interval),                  \
-        7, TUSB_DESC_ENDPOINT, XINPUT_EP_OUT, TUSB_XFER_INTERRUPT, XINPUT_EP_SIZE, 0, (out_interval),                \
-    }
+        7, TUSB_DESC_ENDPOINT, XINPUT_EP_OUT, TUSB_XFER_INTERRUPT, XINPUT_EP_SIZE, 0, (out_interval)
 
-static const uint8_t s_config_fs[] = XINPUT_CONFIG(1, 8);
-static const uint8_t s_config_hs[] = XINPUT_CONFIG(4, 7);
+static const uint8_t s_config_fs[] = {CONFIG_HEADER(XINPUT_CONFIG_LEN, 1), XINPUT_ITF(1, 8)};
+static const uint8_t s_config_hs[] = {CONFIG_HEADER(XINPUT_CONFIG_LEN, 1), XINPUT_ITF(4, 7)};
+static const uint8_t s_config_audio_fs[] = {CONFIG_HEADER(AUDIO_CONFIG_LEN, 3), XINPUT_ITF(1, 8), USB_AUDIO_DESC(1, 1)};
+static const uint8_t s_config_audio_hs[] = {CONFIG_HEADER(AUDIO_CONFIG_LEN, 3), XINPUT_ITF(4, 7), USB_AUDIO_DESC(1, 4)};
+_Static_assert(sizeof(s_config_fs) == XINPUT_CONFIG_LEN, "gamepad configuration length");
+_Static_assert(sizeof(s_config_audio_hs) == AUDIO_CONFIG_LEN, "composite configuration length");
 
 static const char *s_strings[] = {
     (const char[]){0x09, 0x04}, /* English */
     "Stadiacast",
     "Stadiacast Dongle",
     NULL, /* serial: from the chip's MAC */
+    "Controller headset",
 };
 
 /* ---- state -------------------------------------------------------------------------- */
@@ -186,7 +226,7 @@ static bool xinput_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result
     return true;
 }
 
-static const usbd_class_driver_t s_driver = {
+static const usbd_class_driver_t s_xinput = {
     .name = "XINPUT",
     .init = xinput_init,
     .deinit = xinput_deinit,
@@ -196,11 +236,15 @@ static const usbd_class_driver_t s_driver = {
     .xfer_cb = xinput_xfer_cb,
     .sof = NULL,
 };
+static bool s_audio;
 
 usbd_class_driver_t const *usbd_app_driver_get_cb(uint8_t *driver_count)
 {
-    *driver_count = 1;
-    return &s_driver;
+    static usbd_class_driver_t drivers[2];
+    drivers[0] = s_xinput;
+    drivers[1] = usb_audio_driver;
+    *driver_count = s_audio ? 2 : 1;
+    return drivers;
 }
 
 /* ---- API ---------------------------------------------------------------------------- */
@@ -238,23 +282,25 @@ static void on_event(tinyusb_event_t *event, void *arg)
     }
 }
 
-esp_err_t usb_pad_start(usb_pad_rumble_cb_t rumble_cb, void *arg)
+esp_err_t usb_pad_start(usb_pad_rumble_cb_t rumble_cb, void *arg, bool audio)
 {
+    s_audio = audio && usb_audio_init();
     s.lock = xSemaphoreCreateMutex();
     if (!s.lock) return ESP_ERR_NO_MEM;
     s.rumble_cb = rumble_cb;
     s.rumble_arg = arg;
     s.report[1] = XINPUT_REPORT_LEN;
     tinyusb_config_t cfg = TINYUSB_DEFAULT_CONFIG(on_event);
-    cfg.descriptor.device = &s_device;
-    cfg.descriptor.qualifier = &s_qualifier;
+    cfg.descriptor.device = s_audio ? &s_device_audio : &s_device;
+    cfg.descriptor.qualifier = s_audio ? &s_qualifier_audio : &s_qualifier;
     cfg.descriptor.string = s_strings;
     cfg.descriptor.string_count = sizeof(s_strings) / sizeof(s_strings[0]);
-    cfg.descriptor.full_speed_config = s_config_fs;
-    cfg.descriptor.high_speed_config = s_config_hs;
+    cfg.descriptor.full_speed_config = s_audio ? s_config_audio_fs : s_config_fs;
+    cfg.descriptor.high_speed_config = s_audio ? s_config_audio_hs : s_config_hs;
     esp_err_t err = tinyusb_driver_install(&cfg);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Xbox 360 style gamepad on the high-speed USB-C port");
+        ESP_LOGI(TAG, "Xbox 360 style gamepad%s on the high-speed USB-C port",
+                 s_audio ? " and USB headphones (48 kHz stereo)" : "");
     } else {
         ESP_LOGE(TAG, "TinyUSB install failed: %s", esp_err_to_name(err));
     }

@@ -1,0 +1,218 @@
+/*
+ * Headset audio (port of audio.py and docs/protocol.md "Audio to the headset jack"):
+ *
+ *   48 kHz stereo PCM -> Opus (20 ms, 64 kbps, restricted low delay) -> RTP (PT 111, own SSRC
+ *   and sequence, timestamp on the 20 ms grid) -> SRTP -> UDP on the display link's selected pair
+ *
+ * The producer (the USB audio task on the board, a tone thread in the host test) calls
+ * stadia_audio_pcm(); every 960 frames it encodes one Opus frame there and queues it. The rtc
+ * task takes the queue in audio_tick() and sends, but only once the controller's audio route is
+ * open: SetAudioModeRequest(mode 2) went out at READY and was answered (rtc.c).
+ *
+ * The frames follow the producer's clock, which on the board is the USB host's: one frame per
+ * 20 ms of audio it played. A pause (the host stopped streaming) leaves a hole in the timestamps
+ * of the length it lasted, so the controller's jitter buffer stays on the same grid.
+ */
+#include "stadia_internal.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+#include "opus.h"
+#include "audio.h"
+#include "stadia_port.h"
+
+static const char *TAG = "audio";
+
+#define FRAME_SAMPLES 960 /* 20 ms at 48 kHz */
+#define CHANNELS 2
+#define BITRATE 64000
+#define PAYLOAD_TYPE 111
+#define MAX_OPUS 400
+#define QUEUE_LEN 6    /* 120 ms: past it the oldest frame goes, as in audio.py */
+#define GAP_US 100000  /* a pause longer than this resyncs the timestamps to the wall clock */
+#define STATS_MS 10000
+
+typedef struct {
+    uint16_t len;
+    bool marker;
+    uint32_t ts;
+    uint8_t data[MAX_OPUS];
+} frame_t;
+
+static struct {
+    /* producer side */
+    OpusEncoder *enc;
+    bool enc_failed;
+    int complexity;
+    int16_t acc[FRAME_SAMPLES * CHANNELS];
+    size_t nacc;
+    uint32_t ts;
+    int64_t last_frame_us;
+    /* shared, under port_lock */
+    frame_t q[QUEUE_LEN];
+    int head, count;
+    uint32_t encoded, trimmed, enc_us_sum, enc_us_max, bytes;
+    int64_t last_queued_ms;
+    /* rtc task side */
+    volatile bool route; /* frames are wanted (the controller's audio route is open) */
+    uint16_t seq;
+    uint32_t ssrc;
+    uint32_t sent, dropped;
+    int64_t stats_at;
+} A;
+
+void audio_init(const stadia_config_t *cfg)
+{
+    A.complexity = cfg->audio_complexity ? cfg->audio_complexity : 5;
+    uint8_t r[4];
+    port_random(r, sizeof(r));
+    A.ssrc = 0x51A00000u | (uint32_t)(r[0] << 8 | r[1]); /* its own SSRC, not the input ACKs' */
+    A.seq = (uint16_t)(r[2] << 8 | r[3]);
+}
+
+static bool encoder_ready(void)
+{
+    if (A.enc) return true;
+    if (A.enc_failed) return false;
+    int err = 0;
+    A.enc = opus_encoder_create(48000, CHANNELS, OPUS_APPLICATION_RESTRICTED_LOWDELAY, &err);
+    if (!A.enc) {
+        SLOGE(TAG, "Opus encoder: %s", opus_strerror(err));
+        A.enc_failed = true;
+        return false;
+    }
+    opus_encoder_ctl(A.enc, OPUS_SET_BITRATE(BITRATE));
+    opus_encoder_ctl(A.enc, OPUS_SET_COMPLEXITY(A.complexity));
+    SLOGI(TAG, "Opus %s: 48 kHz stereo, 20 ms, %d kbps, complexity %d, %d bytes of state", opus_get_version_string(),
+          BITRATE / 1000, A.complexity, opus_encoder_get_size(CHANNELS));
+    return true;
+}
+
+static void encode_frame(void)
+{
+    int64_t now = port_now_us();
+    bool marker = false;
+    if (!A.last_frame_us) {
+        marker = true;
+    } else if (now - A.last_frame_us > GAP_US) {
+        /* a pause: skip the slots it took, so the next frame lands where the clock says */
+        A.ts += (uint32_t)((now - A.last_frame_us + 10000) / 20000) * FRAME_SAMPLES;
+        marker = true;
+    } else {
+        A.ts += FRAME_SAMPLES;
+    }
+    A.last_frame_us = now;
+
+    uint8_t out[MAX_OPUS];
+    int n = opus_encode(A.enc, A.acc, FRAME_SAMPLES, out, sizeof(out));
+    uint32_t took = (uint32_t)(port_now_us() - now);
+    if (n <= 0) {
+        SLOGW(TAG, "opus_encode: %s", opus_strerror(n));
+        return;
+    }
+    port_lock();
+    if (A.count == QUEUE_LEN) { /* the rtc task fell behind: drop the oldest */
+        A.head = (A.head + 1) % QUEUE_LEN;
+        A.count--;
+        A.trimmed++;
+    }
+    frame_t *f = &A.q[(A.head + A.count) % QUEUE_LEN];
+    f->len = (uint16_t)n;
+    f->marker = marker;
+    f->ts = A.ts;
+    memcpy(f->data, out, (size_t)n);
+    A.count++;
+    A.encoded++;
+    A.bytes += (uint32_t)n;
+    A.enc_us_sum += took;
+    if (took > A.enc_us_max) A.enc_us_max = took;
+    A.last_queued_ms = port_now_ms();
+    port_unlock();
+}
+
+void stadia_audio_pcm(const int16_t *pcm, size_t frames)
+{
+    if (!A.route) { /* nobody to play it to: skip the encoder's work, start the next frame fresh */
+        A.nacc = 0;
+        return;
+    }
+    if (!encoder_ready()) return;
+    while (frames) {
+        size_t take = FRAME_SAMPLES - A.nacc;
+        if (take > frames) take = frames;
+        memcpy(A.acc + A.nacc * CHANNELS, pcm, take * CHANNELS * sizeof(int16_t));
+        A.nacc += take;
+        pcm += take * CHANNELS;
+        frames -= take;
+        if (A.nacc == FRAME_SAMPLES) {
+            encode_frame();
+            A.nacc = 0;
+        }
+    }
+}
+
+void audio_set_route(bool open)
+{
+    if (A.route != open) SLOGI(TAG, "headset audio route %s", open ? "open: sending" : "closed");
+    A.route = open;
+    if (!open) {
+        port_lock();
+        A.count = 0;
+        port_unlock();
+    }
+}
+
+int audio_poll_ms(void)
+{
+    return A.route && port_now_ms() - A.last_queued_ms < 1000 ? 3 : 20;
+}
+
+void audio_tick(rtc_link_t *L)
+{
+    for (;;) {
+        frame_t f;
+        port_lock();
+        bool have = A.count > 0;
+        if (have) {
+            f.len = A.q[A.head].len;
+            f.marker = A.q[A.head].marker;
+            f.ts = A.q[A.head].ts;
+            memcpy(f.data, A.q[A.head].data, f.len);
+            A.head = (A.head + 1) % QUEUE_LEN;
+            A.count--;
+        }
+        port_unlock();
+        if (!have) break;
+
+        uint8_t pkt[12 + MAX_OPUS + SRTP_TAG_LEN];
+        pkt[0] = 0x80;
+        pkt[1] = (uint8_t)((f.marker ? 0x80 : 0) | PAYLOAD_TYPE);
+        pkt[2] = A.seq >> 8, pkt[3] = A.seq & 0xFF;
+        pkt[4] = f.ts >> 24, pkt[5] = (f.ts >> 16) & 0xFF, pkt[6] = (f.ts >> 8) & 0xFF, pkt[7] = f.ts & 0xFF;
+        pkt[8] = A.ssrc >> 24, pkt[9] = (A.ssrc >> 16) & 0xFF, pkt[10] = (A.ssrc >> 8) & 0xFF, pkt[11] = A.ssrc & 0xFF;
+        memcpy(pkt + 12, f.data, f.len);
+        if (rtc_link_send_srtp(L, pkt, 12 + f.len, sizeof(pkt))) {
+            A.seq++;
+            A.sent++;
+        } else {
+            A.dropped++;
+        }
+    }
+
+    int64_t now = port_now_ms();
+    if (!A.stats_at) A.stats_at = now;
+    if (now - A.stats_at >= STATS_MS) {
+        port_lock();
+        uint32_t enc = A.encoded, trimmed = A.trimmed, sum = A.enc_us_sum, max = A.enc_us_max, bytes = A.bytes;
+        A.encoded = A.trimmed = A.enc_us_sum = A.enc_us_max = A.bytes = 0;
+        port_unlock();
+        if (enc || A.sent || A.dropped) {
+            SLOGI(TAG, "%u frames sent in %d s (%u B avg), %u not sent, %u trimmed; encode avg %u us, max %u us",
+                  (unsigned)A.sent, (int)((now - A.stats_at) / 1000), (unsigned)(enc ? bytes / enc : 0),
+                  (unsigned)A.dropped, (unsigned)trimmed, (unsigned)(enc ? sum / enc : 0), (unsigned)max);
+        }
+        A.sent = A.dropped = 0;
+        A.stats_at = now;
+    }
+}

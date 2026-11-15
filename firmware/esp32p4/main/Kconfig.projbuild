@@ -17,4 +17,21 @@ config DONGLE_CHANNEL
     range 1 13
     default 6
 
+config DONGLE_USB_AUDIO
+    bool "USB headphones for the controller's headset jack"
+    default y
+    help
+        Besides the gamepad, the board shows up as USB headphones (48 kHz stereo). What the
+        computer plays there goes to the controller's 3.5 mm jack as Opus. Turn it off to be a
+        gamepad only, as in step 3.
+
+config DONGLE_OPUS_COMPLEXITY
+    int "Opus encoder complexity"
+    range 1 10
+    default 5
+    depends on DONGLE_USB_AUDIO
+    help
+        Higher is better sound for more CPU time per 20 ms frame. The serial log prints the
+        encode time every 10 s while audio plays.
+
 endmenu

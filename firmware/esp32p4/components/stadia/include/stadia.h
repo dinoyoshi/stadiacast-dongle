@@ -5,6 +5,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct {
@@ -15,6 +16,8 @@ typedef struct {
     uint16_t rtc_port;        /* 40000: the display link's UDP port (ICE/DTLS) */
     uint16_t game_port;       /* 40001: the game session's UDP port */
     bool start_game;          /* send StartGame once READY: the game session carries input and rumble */
+    bool audio;               /* open the headset audio route at READY (SetAudioModeRequest mode 2) */
+    uint8_t audio_complexity; /* Opus complexity 1..10; 0 = 5 */
     bool allow_clearcut;      /* false (the live preset): refuse Clearcut with a TLS alert */
 } stadia_config_t;
 
@@ -60,3 +63,10 @@ void stadia_set_pad_callback(stadia_pad_cb_t cb, void *arg);
 /* Set the rumble motors (0..65535 each), held until changed. Thread-safe. Needs the game
  * session: before it is up, the latest level is kept and sent once it connects. */
 void stadia_rumble(uint16_t left, uint16_t right);
+
+/* Headset audio: interleaved 48 kHz stereo PCM for the controller's headset jack, any number of
+ * frames per call. Call it from one task, at the pace the audio plays: every 960 frames it
+ * encodes one 20 ms Opus frame right there, which takes up to a few ms and STADIA_AUDIO_STACK
+ * bytes of stack. Without a controller whose audio route is open it returns at once. */
+#define STADIA_AUDIO_STACK (48 * 1024)
+void stadia_audio_pcm(const int16_t *pcm, size_t frames);

@@ -49,6 +49,11 @@ int64_t port_now_ms(void)
     return esp_timer_get_time() / 1000;
 }
 
+int64_t port_now_us(void)
+{
+    return esp_timer_get_time();
+}
+
 double port_wall_time(void)
 {
     return (double)STADIA_BUILD_EPOCH + esp_timer_get_time() / 1e6;

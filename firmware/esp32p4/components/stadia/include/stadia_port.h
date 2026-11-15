@@ -17,6 +17,7 @@ bool port_spawn(port_task_fn fn, void *arg, const char *name, int stack_bytes);
 
 /* Milliseconds since boot, monotonic. */
 int64_t port_now_ms(void);
+int64_t port_now_us(void);
 
 /* Unix time in seconds. The dongle has no clock source, so it counts from the build time;
  * the controller checks neither certificate dates nor anything else against it. */
