@@ -30,9 +30,9 @@ static const char *TAG = "audio";
 
 #define FRAME_SAMPLES 960 /* 20 ms at 48 kHz */
 #define CHANNELS 2
-#define BITRATE 64000
+#define BITRATE 96000
 #define PAYLOAD_TYPE 111
-#define MAX_OPUS 400
+#define MAX_OPUS 600
 #define QUEUE_LEN 6    /* 120 ms: past it the oldest frame goes, as in audio.py */
 #define GAP_US 100000  /* a pause longer than this resyncs the timestamps to the wall clock */
 #define STATS_MS 10000
@@ -71,7 +71,7 @@ static struct {
 
 void audio_init(const stadia_config_t *cfg)
 {
-    A.complexity = cfg->audio_complexity ? cfg->audio_complexity : 5;
+    A.complexity = cfg->audio_complexity ? cfg->audio_complexity : 8;
     uint8_t r[4];
     port_random(r, sizeof(r));
     A.ssrc = 0x51A00000u | (uint32_t)(r[0] << 8 | r[1]); /* its own SSRC, not the input ACKs' */

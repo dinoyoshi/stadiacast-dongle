@@ -29,7 +29,7 @@ idf.py -p <port> flash monitor     # the USB-C port marked for programming / CDC
 The first build downloads `esp_hosted`, `esp_wifi_remote` and `esp_tinyusb` from the Espressif
 component registry. `idf.py menuconfig` → *Stadiacast dongle* changes the hotspot's name, password and
 channel. The defaults are `stadiacast-dongle` / `stadiacast` on channel 6. The same menu turns the
-USB headphones off (gamepad only) and sets the Opus encoder's complexity (default 5).
+USB headphones off (gamepad only) and sets the Opus encoder's complexity (default 8).
 
 ## What step 1 should print
 
@@ -111,7 +111,7 @@ which Windows 10+, macOS, Linux and Android support without a driver. Whatever t
 plays there goes to the controller's 3.5 mm headset jack:
 
 ```
-USB (1 ms packets) -> 20 ms frames -> Opus 64 kbps (libopus, fixed point) -> RTP PT 111
+USB (1 ms packets) -> 20 ms frames -> Opus 96 kbps (libopus, fixed point) -> RTP PT 111
   -> SRTP (the display link's DTLS keys) -> UDP to the controller, on the display link's pair
 ```
 
@@ -127,7 +127,7 @@ rtc: SetAudioMode(WebRTC Opus) sent
 rtc: SetAudioMode answered: code 0
 audio: headset audio route open: sending
 usb_audio: the host started playing
-audio: Opus libopus 1.5.2-fixed: 48 kHz stereo, 20 ms, 64 kbps, complexity 5, ... bytes of state
+audio: Opus libopus 1.5.2-fixed: 48 kHz stereo, 20 ms, 96 kbps, complexity 8, ... bytes of state
 audio: 500 frames sent in 10 s (160 B avg), 0 not sent, 0 trimmed, 0 underruns, 0 resyncs; encode avg ... us, max ... us
 ```
 
