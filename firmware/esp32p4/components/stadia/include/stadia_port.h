@@ -14,6 +14,9 @@ typedef void (*port_task_fn)(void *arg);
 
 /* Start fn(arg) in a task (FreeRTOS) or detached thread (host). */
 bool port_spawn(port_task_fn fn, void *arg, const char *name, int stack_bytes);
+/* The same at a lower priority than the network task (FreeRTOS 4 instead of 5; the host ignores it):
+ * work that can wait behind the links and the headphones' encoder. */
+bool port_spawn_low(port_task_fn fn, void *arg, const char *name, int stack_bytes);
 
 /* Milliseconds since boot, monotonic. */
 int64_t port_now_ms(void);

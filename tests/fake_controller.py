@@ -54,6 +54,7 @@ from stadiacast.rtc import (
     DtlsCertificate,
     RtcEndpoint,
     RtpPacket,
+    build_rtp,
     parse_rtp,
     parse_wire_message,
     random_ice_string,
@@ -147,6 +148,13 @@ class FakeController:
         self.audio_unplayed = 0
         self.audio_payload_type = 111
         self.audio_route_open = False  # SetAudioModeRequest mode 2 was accepted in this boot
+        # mic_echo: once the display asked for the microphone (#5 true), send every played frame
+        # back as the controller's own Opus stream, SRTP on the media pair with an SSRC and
+        # sequence of its own, as a real controller sends its microphone.
+        self.mic_echo = False
+        self.mic_on = False
+        self.mic_sent = 0
+        self._mic_seq = 1000
         self.headset_plugged = False  # GetControllerStateResponse.f4
         self.serial_number = "FAKESERIAL0001"  # GetControllerStateResponse.f17
         self.start_game_requests: list[dict] = []  # DisplayToController #8 StartGame {ticket, key, number}
@@ -278,6 +286,11 @@ class FakeController:
                 self._on_start_game(rpc["ticket"], msg.start_game)
             elif msg.HasField("set_audio_mode") and msg.set_audio_mode.mode == AUDIO_MODE_WEBRTC_OPUS:
                 self._on_set_audio_mode(rpc["ticket"])
+            elif msg.HasField("request5"):
+                # #5 BoolValue(true) turns the microphone stream on (a 316382 controller answers
+                # OK and starts sending within ~25 ms)
+                self.mic_on = self.mic_on or msg.request5.value
+                self.endpoint.send_wire(WIRE_ID_DC_RPC_CONTROLLER, p.rpc_response(rpc["ticket"]))
             else:
                 self.endpoint.send_wire(
                     WIRE_ID_DC_RPC_CONTROLLER,
@@ -596,6 +609,8 @@ class FakeController:
                 self.audio_unplayed += 1
             else:
                 self.audio_frames.append(pkt)
+                if self.mic_echo and self.mic_on:
+                    self._echo_mic(pkt)
             return
         self.rtp_in.put_nowait(pkt)
         try:
@@ -605,6 +620,12 @@ class FakeController:
                 self.acks.put_nowait(m.ack_sequence_number)
         except Exception:
             pass
+
+    def _echo_mic(self, pkt) -> None:
+        self._mic_seq = (self._mic_seq + 1) & 0xFFFF
+        rtp = build_rtp(self.audio_payload_type, self._mic_seq, pkt.timestamp, 0x4D1C0001, pkt.payload)
+        if self.endpoint.send_rtp_packet(rtp):
+            self.mic_sent += 1
 
     # ---- HTTP/1.1 client shaped like the firmware's -------------------------
     async def request(
@@ -1013,6 +1034,7 @@ async def run_cli(args) -> int:
         game_framing=args.game_framing,
         haptics_watchdog=args.haptics_watchdog,
     )
+    fc.mic_echo = args.mic_echo
     t0 = time.monotonic()
     fc.on_motors = lambda left, right, why: print(
         f"[{time.monotonic() - t0:7.3f}] motors left={left} right={right} ({why})", flush=True
@@ -1072,7 +1094,7 @@ def audio_summary(fc: FakeController) -> str:
     return (
         f"audio: {len(frames)} frames played ({fc.audio_unplayed} unplayed), ssrc {','.join(sorted(ssrcs))}, "
         f"pt {frames[0].payload_type}, {seq_gaps} sequence gaps, timestamp steps {dict(sorted(steps.items()))}, "
-        f"payload {min(sizes)}..{max(sizes)} B"
+        f"payload {min(sizes)}..{max(sizes)} B" + (f", {fc.mic_sent} echoed as the microphone" if fc.mic_echo else "")
     )
 
 
@@ -1147,4 +1169,7 @@ if __name__ == "__main__":
     )
     ap.add_argument("--game-framing", choices=("rtp", "raw"), default="rtp")
     ap.add_argument("--haptics-watchdog", type=float, default=5.0)
+    ap.add_argument(
+        "--mic-echo", action="store_true", help="send the headset audio back as the controller's microphone stream"
+    )
     sys.exit(asyncio.run(run_cli(ap.parse_args())))

@@ -8,18 +8,22 @@
  *            answered with the game link's parameters (game.c)
  *   audio    SetAudioModeRequest(mode 2) at READY, then the headset frames as SRTP on the
  *            display link's pair (audio.c)
+ *   mic      DisplayToController #5 (true) after the audio route, repeated while the stream is
+ *            quiet; what the controller sends as SRTP media goes to the decoder (mic.c)
  *
  * Everything on the sockets runs in one task, so only the remote descriptions and the
  * callbacks need the lock.
  */
 #include "game.h"
 #include "audio.h"
+#include "mic.h"
 #include "rtc_link.h"
 #include "stadia_internal.h"
 #include "stadia_pb.h"
 #include "stadia_port.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -31,8 +35,8 @@ enum { RPC_OK = 0, RPC_INVALID_ARGUMENT = 3, RPC_UNIMPLEMENTED = 12 };
 enum { C2D_PROXY_REQUEST = 1, C2D_CONTROLLER_STATE = 2, C2D_INPUT = 3, C2D_AUDIO_CONFIG = 4, C2D_DISCONNECT = 8,
        C2D_BATTERY = 10, C2D_KEEPALIVE = 14, C2D_GET_CURRENT_TIME = 18 };
 /* DisplayToController fields */
-enum { D2C_PROXY_RESPONSE = 1, D2C_GET_CONTROLLER_STATE = 2, D2C_START_GAME = 8, D2C_SET_AUDIO_MODE = 16,
-       D2C_CURRENT_TIME = 21 };
+enum { D2C_PROXY_RESPONSE = 1, D2C_GET_CONTROLLER_STATE = 2, D2C_MIC_ON = 5, D2C_START_GAME = 8,
+       D2C_SET_AUDIO_MODE = 16, D2C_CURRENT_TIME = 21 };
 enum { AUDIO_MODE_WEBRTC_OPUS = 2 };
 
 #define DISPLAY_RPC_DELAY_MS 600
@@ -63,6 +67,47 @@ static struct {
     uint32_t audio_ticket;
     int64_t audio_at;
 } D;
+
+static void send_rpc(int kind, uint32_t ticket, int code, const char *message, const uint8_t *payload, size_t plen);
+
+/* ---- the microphone ---------------------------------------------------------------- */
+
+/* DisplayToController #5 (a BoolValue) with true makes the controller send its microphone: Opus,
+ * PT 111, 20 ms frames with DTX (3-byte frames in silence), as SRTP on the display link's pair
+ * under the display offer's audio SSRC. Found on a controller on firmware 316382 by sending each
+ * request whose use was not known: it answered OK and the stream began 24 ms later. The stream
+ * also stopped by itself after a while, so the request is repeated whenever nothing has come for
+ * MIC_QUIET_MS (it is answered OK while the stream runs too). */
+#define MIC_ON_DELAY_MS 500 /* after the SetAudioMode answer */
+#define MIC_QUIET_MS 3000
+
+static struct {
+    int64_t next_at; /* 0: not yet due */
+    uint32_t ticket;
+    uint32_t sent;
+} MIC;
+
+static void send_mic_on(void)
+{
+    uint8_t v[4], msg[8];
+    pbw_t b = PBW(v, sizeof(v));
+    pbw_uint(&b, 1, 1);
+    pbw_t m = PBW(msg, sizeof(msg));
+    pbw_bytes(&m, D2C_MIC_ON, b.buf, b.len);
+    MIC.ticket = ++D.ticket;
+    send_rpc(1, MIC.ticket, 0, NULL, m.buf, m.len);
+    if (MIC.sent++ < 3) SLOGI(TAG, "microphone on (DisplayToController #5 true) sent");
+}
+
+static void mic_tick(int64_t now)
+{
+    if (!g_cfg.mic || !rtc_link_up(&D.link) || !D.audio_answered) return;
+    if (!MIC.next_at) MIC.next_at = now + MIC_ON_DELAY_MS;
+    if (now < MIC.next_at) return;
+    int64_t last = mic_last_packet_ms();
+    if (!MIC.sent || now - last >= MIC_QUIET_MS) send_mic_on();
+    MIC.next_at = now + MIC_QUIET_MS;
+}
 
 /* ---- display RPCs ------------------------------------------------------------------- */
 
@@ -122,7 +167,8 @@ static void send_start_game(void)
 }
 
 /* DisplayToController #16 SetAudioModeRequest {1 mode: 2, 3 f3: true}: the WebRTC Opus route to
- * the headset jack. Without it the controller takes the RTP and plays nothing. */
+ * the headset jack. Without it the controller takes the RTP and plays nothing.
+ * (Its f2 is not the microphone: a controller on firmware 316382 answers INVALID_ARGUMENT.) */
 static void send_set_audio_mode(void)
 {
     uint8_t am[8], msg[16];
@@ -273,6 +319,8 @@ static void on_rpc(const uint8_t *data, size_t len)
         } else {
             SLOGI(TAG, "notification ControllerToDisplay #%u", (unsigned)variant.field);
         }
+    } else if (rpc.kind == 2 && MIC.ticket && rpc.ticket == MIC.ticket) {
+        if (rpc.code != 0 || MIC.sent <= 3) SLOGI(TAG, "microphone on answered: code %u", (unsigned)rpc.code);
     } else if (rpc.kind == 2 && D.audio_sent && rpc.ticket == D.audio_ticket) {
         /* a repeat in the same boot is FAILED_PRECONDITION ("already in WebRTC Opus mode"): open too */
         SLOGI(TAG, "SetAudioMode answered: code %u%s", (unsigned)rpc.code, rpc.code == 9 ? " (already open)" : "");
@@ -354,7 +402,8 @@ static void display_on_connected(rtc_link_t *L)
     D.state_reqs = 0;
     D.ready_at = 0;
     D.start_sent = false;
-    D.audio_sent = false;
+    D.audio_sent = D.audio_answered = false; /* the microphone waits for this link's answer */
+    MIC.next_at = 0, MIC.ticket = 0, MIC.sent = 0;
     audio_set_route(false);
 }
 
@@ -366,10 +415,16 @@ static void display_on_closed(rtc_link_t *L)
     pad_report(&released, "rtc");
 }
 
+static void display_on_media(rtc_link_t *L, const uint8_t *rtp, size_t n)
+{
+    mic_on_rtp(L, 0, rtp, n);
+}
+
 static const rtc_link_ops_t DISPLAY_OPS = {
     .on_connected = display_on_connected,
     .on_closed = display_on_closed,
     .on_wire = display_on_wire,
+    .on_media = display_on_media,
 };
 
 /* ---- the task ----------------------------------------------------------------------- */
@@ -394,6 +449,7 @@ static void display_tick(void)
     if (D.audio_sent && rtc_link_up(&D.link) && (D.audio_answered || now - D.audio_at >= AUDIO_ROUTE_WAIT_MS)) {
         audio_set_route(true);
     }
+    mic_tick(now);
     audio_tick(&D.link);
 }
 
@@ -407,7 +463,14 @@ static void poll_socket(rtc_link_t *L, uint8_t *buf, size_t cap)
 
 static void rtc_task(void *arg)
 {
-    static uint8_t buf[1600];
+    /* From the heap: .bss on v1.x P4 chips comes out of the small RAM pool the system starts
+     * from (see c6_update.c), and the microphone's additions had used up what was left. */
+    const size_t cap = 1600;
+    uint8_t *buf = malloc(cap);
+    if (!buf) {
+        SLOGE(TAG, "no memory for the rtc task");
+        return;
+    }
     rtc_link_t *G = game_link();
     for (;;) {
         fd_set fds;
@@ -417,8 +480,8 @@ static void rtc_task(void *arg)
         int maxfd = D.link.sock > G->sock ? D.link.sock : G->sock;
         struct timeval tv = {.tv_sec = 0, .tv_usec = audio_poll_ms() * 1000};
         int r = select(maxfd + 1, &fds, NULL, NULL, &tv);
-        if (r > 0 && FD_ISSET(D.link.sock, &fds)) poll_socket(&D.link, buf, sizeof(buf));
-        if (r > 0 && FD_ISSET(G->sock, &fds)) poll_socket(G, buf, sizeof(buf));
+        if (r > 0 && FD_ISSET(D.link.sock, &fds)) poll_socket(&D.link, buf, cap);
+        if (r > 0 && FD_ISSET(G->sock, &fds)) poll_socket(G, buf, cap);
         display_tick();
         game_tick();
     }
@@ -434,6 +497,7 @@ bool rtc_start(uint16_t display_port, uint16_t game_port)
 {
     if (!rtc_link_global_init()) return false;
     audio_init(&g_cfg);
+    if (g_cfg.mic) mic_init();
     if (!rtc_link_init(&D.link, "display", display_port, &DISPLAY_OPS)) return false;
     const rtc_identity_t *id = rtc_identity();
     rtc_link_set_credentials(&D.link, id->ufrag, id->pwd);

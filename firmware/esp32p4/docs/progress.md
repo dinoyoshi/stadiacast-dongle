@@ -19,7 +19,7 @@ OTG port, as four kinds of controller, on Linux and Windows.
 | Standalone: power from the OTG port, LED status, link timeout | done | board |
 | Controller modes: Xbox 360, DualShock 4, Switch Pro, HID | done | Linux; Steam sees DS4 as a PS4 controller |
 | C6 ESP-Hosted update from the P4 | done | board: 2.12.11 to 2.13.1 |
-| Headset microphone | next | |
+| Headset microphone (the controller's headset as the PC's USB microphone) | done | Linux (PipeWire): voice recorded, no clipping, 0 packets lost |
 
 Test rig: FireBeetle 2 ESP32-P4 with a v1.3 P4, C6 on ESP-Hosted 2.13.1, a Stadia Controller on
 Wi-Fi firmware build 316382, a Linux PC and a Windows PC.
@@ -40,6 +40,7 @@ All merged into `main`.
 | #9 | Standalone | OTG port only, LED on GPIO3, session closed after 10 s of silence |
 | #10 | Controller modes | Stadia + A/B/X/Y for 1.5 s, or the BOOT button; saved in NVS |
 | #11 | Windows headset audio | Xbox+audio as 1209:0001 with an MS OS 2.0 `XUSB10` descriptor; UAC2 feature unit controls per channel |
+| #13 | Headset microphone | `DisplayToController` #5 true starts the controller's Opus mic stream (found by probing); UAC2 capture on iso IN 0x82 |
 
 ## Things we learned the hard way
 
@@ -58,15 +59,21 @@ All merged into `main`.
   device, so the headphones got no driver. Another ID plus the `XUSB10` compatible ID splits the
   device properly. Windows also wants UAC2 feature-unit controls for every channel, where Linux
   takes master only.
+- **The controller's microphone** is not sent until the display asks with `DisplayToController`
+  #5 (a BoolValue) set to true; no document named it, a probe of the unknown requests found it.
+  The f2 flag of SetAudioMode is not it (INVALID_ARGUMENT). The mic's 13 KB of static buffers
+  boot-looped the board again (startup RAM, above), so they are on the heap too.
 
 ## Known issues
 
 - Slight clipping on some loud songs. Likely fix: a few dB of headroom before the Opus encoder.
 - DualShock 4 and Switch Pro rumble, and Switch Pro mode on a real Switch, are untested.
 - One controller at a time.
+- With the microphone on, the headphones' stream has 3 to 6 underruns per 10 s (0 to 1 without).
 
 ## Next
 
-1. **Headset microphone:** the controller's mic as a USB microphone on the dongle.
-2. Audio headroom for the clipping above.
+1. Audio headroom for the clipping above, and fewer headphone underruns while the mic runs
+   (for example a lower Opus complexity then).
+2. Try the microphone on Windows.
 3. Test the Switch Pro mode on a Switch, and rumble in DS4 and Switch modes.

@@ -9,14 +9,15 @@
  * for the DualShock 4's feature reports, SET_REPORT as another way in for output reports).
  *
  * With audio the device is composite (class EF/02/01): the gamepad stays interface 0 and the
- * UAC2 headphones of usb_audio.c are interfaces 1 and 2, behind an interface association.
+ * UAC2 headset of usb_audio.c is interfaces 1 to 3 (control, headphones, microphone), behind an
+ * interface association.
  *
  * Xbox 360 with audio on Windows: xusb22.inf lists 045E:028E as a hardware ID of the whole
  * device, so Windows' Xbox driver takes the entire composite device and the headphones never get
  * a driver (Linux's xpad binds per interface, so it never showed there). In that combination the
  * dongle therefore uses another ID (XINPUT_AUDIO_VID/PID): Windows then loads its composite
  * driver, which gives interface 0 to the Xbox driver through the "XUSB10" compatible ID in a
- * Microsoft OS 2.0 descriptor (BOS, bcdUSB 2.10) and interfaces 1-2 to usbaudio2. Linux's xpad
+ * Microsoft OS 2.0 descriptor (BOS, bcdUSB 2.10) and interfaces 1-3 to usbaudio2. Linux's xpad
  * binds any FF/5D/01 interface from the pid.codes vendor, so Linux keeps working.
  * Changing the mode takes the device off the bus (TinyUSB uninstalled) and brings it back with
  * the new descriptors.
@@ -42,7 +43,7 @@ static const char *TAG = "usb_pad";
 #define PAD_EP_IN 0x81
 #define PAD_EP_OUT 0x01
 #define PAD_EP_SIZE 64
-#define CONFIG_MAX 256
+#define CONFIG_MAX 384
 
 /* Xbox 360 with the headphones: an ID no Windows driver claims for the whole device. pid.codes'
  * test PID; xpad matches vendor 1209 with an FF/5D/01 interface (Linux 5.12+). */
@@ -83,8 +84,8 @@ static const uint8_t s_msos[] = {
 _Static_assert(sizeof(s_bos) == BOS_LEN, "BOS length");
 _Static_assert(sizeof(s_msos) == MSOS_SET_LEN, "MS OS 2.0 descriptor set length");
 
-static const uint8_t s_audio_fs[] = {USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_FS)};
-static const uint8_t s_audio_hs[] = {USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_HS)};
+static const uint8_t s_audio_fs[] = {USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_FS, USB_MIC_EP_SIZE_FS)};
+static const uint8_t s_audio_hs[] = {USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_HS, USB_MIC_EP_SIZE_HS)};
 _Static_assert(sizeof(s_audio_hs) == USB_AUDIO_DESC_LEN, "audio descriptor length");
 
 /* ---- state -------------------------------------------------------------------------- */
@@ -190,9 +191,9 @@ static void build_descriptors(void)
             memcpy(c + n, a, USB_AUDIO_DESC_LEN);
             n += USB_AUDIO_DESC_LEN;
         }
-        /* configuration: 1 or 3 interfaces, bus powered, 500 mA */
+        /* configuration: the gamepad, plus the headset's interfaces; bus powered, 500 mA */
         const uint8_t head[9] = {9, TUSB_DESC_CONFIGURATION, (uint8_t)(n & 0xFF), (uint8_t)(n >> 8),
-                                 s.audio ? 3 : 1, 1, 0, 0x80, 0xFA};
+                                 s.audio ? 1 + USB_AUDIO_ITF_COUNT : 1, 1, 0, 0x80, 0xFA};
         memcpy(c, head, sizeof(head));
     }
 }
@@ -449,7 +450,7 @@ static esp_err_t install(void)
     esp_err_t err = tinyusb_driver_install(&cfg);
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "%s gamepad%s on the high-speed USB-C port (%04X:%04X)", pad_mode_info(s.mode)->name,
-                 s.audio ? " and USB headphones (48 kHz stereo)" : "", s.device.idVendor, s.device.idProduct);
+                 s.audio ? " and a USB headset (48 kHz stereo headphones, mono microphone)" : "", s.device.idVendor, s.device.idProduct);
     } else {
         ESP_LOGE(TAG, "TinyUSB install failed: %s", esp_err_to_name(err));
     }

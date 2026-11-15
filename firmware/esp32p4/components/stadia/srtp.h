@@ -1,6 +1,7 @@
 /*
- * SRTP sender, AES128_CM_HMAC_SHA1_80 (RFC 3711), for one outgoing stream: the headset audio.
- * A port of rtc/srtp.py's protect_rtp (key derivation rate 0, as libsrtp does it).
+ * SRTP, AES128_CM_HMAC_SHA1_80 (RFC 3711): the sender for our one outgoing stream (the headset
+ * audio) and the receiver for what the controller sends as media (its microphone). A port of
+ * rtc/srtp.py's protect_rtp / unprotect_rtp (key derivation rate 0, as libsrtp does it).
  */
 #pragma once
 
@@ -27,3 +28,12 @@ void srtp_tx_free(srtp_tx_t *s);
 /* Encrypt the payload of the RTP packet in pkt[0..len) in place and append the tag. Returns
  * the SRTP length (len + 10), or 0 if it does not fit in cap or is not an RTP packet. */
 size_t srtp_protect(srtp_tx_t *s, uint8_t *pkt, size_t len, size_t cap);
+
+/* The receiving side: the same session keys, the controller's (the DTLS client's) master key
+ * and salt. One rollover counter, kept per SSRC by the caller resetting on a new one. */
+typedef srtp_tx_t srtp_rx_t;
+#define srtp_rx_init srtp_tx_init
+#define srtp_rx_free srtp_tx_free
+/* Check the tag and decrypt in place. Returns the RTP length (len - 10), 0 if the packet is not
+ * SRTP or fails authentication. */
+size_t srtp_unprotect(srtp_rx_t *s, uint8_t *pkt, size_t len);

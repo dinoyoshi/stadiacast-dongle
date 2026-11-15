@@ -54,8 +54,9 @@ typedef struct {
 /* The host's rumble levels, 0..255 (large = left motor, small = right). Called from the USB task. */
 typedef void (*usb_pad_rumble_cb_t)(uint8_t large, uint8_t small, void *arg);
 
-/* audio: also be USB headphones (UAC2, 48 kHz 16-bit stereo, the host's volume and mute), a
- * composite device next to the gamepad; usb_pad_audio_read() returns what the host plays.
+/* audio: also be a USB headset (UAC2: 48 kHz 16-bit stereo headphones and a mono microphone, each
+ * with the host's volume and mute), a composite device next to the gamepad;
+ * usb_pad_audio_read() returns what the host plays, usb_pad_mic_write() feeds the microphone.
  * The Switch Pro mode is the gamepad alone. */
 esp_err_t usb_pad_start(usb_pad_mode_t mode, usb_pad_rumble_cb_t rumble_cb, void *arg, bool audio);
 /* Leave the bus and come back in another mode. Not from the USB task. */
@@ -68,3 +69,9 @@ bool usb_pad_mounted(void);
 /* Up to max_frames interleaved stereo frames the host played (volume applied), waiting up to
  * timeout_ms for the first. 0 while the host plays nothing. */
 size_t usb_pad_audio_read(int16_t *pcm, size_t max_frames, uint32_t timeout_ms);
+
+/* Mono 48 kHz samples for the microphone, from one task, at the pace they were recorded. They are
+ * buffered (about 40 ms before the host gets the first) and the buffer follows the host's clock:
+ * a backlog is trimmed, an underrun is filled with silence. Dropped while the board has no
+ * microphone. */
+void usb_pad_mic_write(const int16_t *pcm, size_t frames);

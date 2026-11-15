@@ -21,7 +21,7 @@ is in [docs/progress.md](docs/progress.md).
 | Four controller modes: Xbox 360, DualShock 4, Switch Pro, HID gamepad | tested on Linux (Steam sees DS4 mode as a PS4 controller) |
 | Runs from the OTG USB-C port alone, LED shows its state | tested on the board |
 | Updates the C6's ESP-Hosted firmware from the P4 | done once: 2.12.11 to 2.13.1 |
-| Headset microphone | not yet |
+| Headset microphone: the headset on the controller is the PC's USB microphone | tested on Linux (PipeWire) |
 
 The controller needs its **Wi-Fi firmware** (ours runs build 316382; the Python receiver is
 tested with `ota.282115`). See [Known limits](#known-limits) for what is rough.
@@ -155,7 +155,9 @@ and Android drive without anything to install.
   the likely fix.
 - Rumble is tested in Xbox 360 mode. DualShock 4 and Switch Pro rumble, and the Switch Pro mode
   on a real Switch console, are untested.
-- No headset microphone yet.
+- The headset microphone is tested on Linux only. While it runs, the headphones' stream has a
+  few more underruns (3 to 6 per 10 s instead of 0 to 1): the P4 is close to its limit encoding
+  and decoding at once.
 - One controller at a time (the Python receiver handles several).
 - The controller needs its Wi-Fi firmware; a Bluetooth-mode controller has to be flashed back
   first ([docs/step1-baseline.md](docs/step1-baseline.md)).
@@ -232,6 +234,28 @@ after DTLS connects, the same as the Python receiver.
   device: the gamepad interface gets the Xbox driver through the `XUSB10` compatible ID in a
   Microsoft OS 2.0 descriptor, and the headphones get the USB Audio 2.0 driver. Linux's xpad
   drives 1209 XInput pads too (kernel 5.12+).
+- **Microphone.** The same sound card has a microphone (48 kHz 16-bit mono, volume -50 to 0 dB
+  and mute), fed by the headset plugged into the controller.
+
+  ```
+  DisplayToController #5 BoolValue(true) -> the controller sends Opus (PT 111, 20 ms, DTX)
+    as SRTP on the display link's pair -> checked and decrypted (the controller's DTLS keys)
+    -> Opus decoder (mono, 48 kHz; lost frames concealed) -> 40 ms buffer -> USB IN 0x82
+  ```
+
+  Nothing documented that request: a probe build sent each display request whose use was not
+  known, and #5 with `true` started the stream 24 ms later (controller firmware 316382). The
+  stream is under the display offer's audio SSRC and uses DTX (about 7 tiny packets a second
+  while nobody talks). It stopped by itself once during that test, so the board sends the
+  request after each link's SetAudioMode answer and again whenever nothing has come for 3 s. The
+  buffer follows the computer's clock: past 120 ms of backlog it skips back to 40 ms, and when it
+  runs dry the computer gets silence until it has 40 ms again. menuconfig → *Pass the
+  controller's microphone to the USB headset* turns the request and the decoder off.
+
+  What the other unknown requests answered, for the record: #6, #7, #11, #14, #17 and #18 (float)
+  OK; #13, #22 and #23 UNIMPLEMENTED; #10 with an empty string code 1 "Disconnected before
+  connect completed."; `SetAudioMode` mode 1 "Audio mode not implemented", mode 4 OK, and mode 2
+  with `f2` INVALID_ARGUMENT.
 
 ### Updating the C6 (Wi-Fi) firmware
 
@@ -277,6 +301,10 @@ With `STADIA_AUDIO=1` the host build also opens the headset audio route and play
 the fake controller (`--game`) ends with a line on what its jack got: frames played (SRTP
 checked), their SSRC, sequence gaps and timestamp steps (all 960). The host build compiles the
 same libopus as the board.
+
+With `STADIA_MIC=1` as well, and `--mic-echo` on the fake controller, the fake controller sends
+every frame it plays back as its own SRTP stream, the host build decodes it as the microphone,
+and prints the tone it hears every 5 s (`microphone 5.0 s, 440 Hz, peak 8310`).
 
 ### If the Wi-Fi doesn't come up
 

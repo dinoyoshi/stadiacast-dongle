@@ -25,7 +25,7 @@ stadia_embed_certs(${CORE}/certs ${CMAKE_CURRENT_BINARY_DIR}/gen)
 add_executable(stadia_host
     main_host.c
     ${CORE}/pb.c ${CORE}/https.c ${CORE}/receiver.c ${CORE}/signaling.c
-    ${CORE}/rtc_identity.c ${CORE}/rtc.c ${CORE}/rtc_link.c ${CORE}/game.c ${CORE}/audio.c ${CORE}/srtp.c ${CORE}/dns_sink.c ${CORE}/sntp.c ${CORE}/port_posix.c)
+    ${CORE}/rtc_identity.c ${CORE}/rtc.c ${CORE}/rtc_link.c ${CORE}/game.c ${CORE}/audio.c ${CORE}/mic.c ${CORE}/srtp.c ${CORE}/dns_sink.c ${CORE}/sntp.c ${CORE}/port_posix.c)
 target_include_directories(stadia_host PRIVATE ${CORE}/include ${CMAKE_CURRENT_BINARY_DIR}/gen)
 target_compile_options(stadia_host PRIVATE -Wall -Wextra -Wno-unused-parameter -g -fsanitize=address,undefined)
 target_link_options(stadia_host PRIVATE -fsanitize=address,undefined)

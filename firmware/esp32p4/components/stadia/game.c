@@ -10,6 +10,7 @@
  * re-sent every 2 s.
  */
 #include "game.h"
+#include "mic.h"
 
 #include "stadia_pb.h"
 #include "stadia_port.h"
@@ -288,7 +289,13 @@ static void on_closed(rtc_link_t *L)
     SLOGI(TAG, "game session closed after %u input messages", (unsigned)G.input_messages);
 }
 
+static void on_media(rtc_link_t *L, const uint8_t *rtp, size_t n)
+{
+    mic_on_rtp(L, 1, rtp, n);
+}
+
 static const rtc_link_ops_t OPS = {
+    .on_media = on_media,
     .on_connected = on_connected,
     .on_closed = on_closed,
     .on_wire = on_wire,

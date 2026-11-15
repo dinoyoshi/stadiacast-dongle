@@ -168,3 +168,8 @@ size_t port_inflate(const uint8_t *src, size_t n, uint8_t *dst, size_t cap)
     }
     return 0;
 }
+
+bool port_spawn_low(port_task_fn fn, void *arg, const char *name, int stack_bytes)
+{
+    return port_spawn(fn, arg, name, stack_bytes);
+}
