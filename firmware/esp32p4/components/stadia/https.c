@@ -33,7 +33,7 @@
 static const char *TAG = "https";
 
 #define MAX_CONNECTIONS 4
-#define HEAD_MAX 4096
+#define HEAD_MAX 16384 /* RegisterController carries a ~6 KB CAST-CERT header */
 #define BODY_MAX (128 * 1024)
 #define SCRATCH_MAX (16 * 1024)
 #define IDLE_TIMEOUT_S 75
@@ -246,6 +246,7 @@ static int read_request(conn_t *c, char *head, size_t *carry, http_req_t *req)
     head[have] = '\0';
     while (!(end = strstr(head, "\r\n\r\n"))) {
         if (have >= HEAD_MAX - 1) {
+            SLOGW(TAG, "%s: request head over %d bytes, answering 400", c->peer, HEAD_MAX - 1);
             return -1;
         }
         int r = mbedtls_ssl_read(&c->ssl, (unsigned char *)head + have, HEAD_MAX - 1 - have);
@@ -264,6 +265,7 @@ static int read_request(conn_t *c, char *head, size_t *carry, http_req_t *req)
     memset(req, 0, sizeof(*req));
     snprintf(req->peer, sizeof(req->peer), "%s", c->peer);
     if (!parse_head(head, req, &clen)) {
+        SLOGW(TAG, "%s: unparseable request line \"%.60s\", answering 400", c->peer, head);
         return -1;
     }
     size_t extra = have - head_len; /* body bytes that came with the head */
