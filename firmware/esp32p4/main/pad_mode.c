@@ -1,7 +1,8 @@
 /*
  * Picking the gamepad mode from the controller: hold the Stadia button with a face button for
- * 2 s. The board leaves USB and comes back as the new kind of controller, remembers it (NVS) for
- * the next power-up, and pulses the controller's motors once per mode number:
+ * 1.5 s (a 4 s hold of the Stadia button turns the controller off). The board leaves USB and
+ * comes back as the new kind of controller, remembers it (NVS) for the next power-up, and
+ * pulses the controller's motors once per mode number:
  *   Stadia + A   Xbox 360      (1 pulse)
  *   Stadia + B   DualShock 4   (2 pulses)
  *   Stadia + X   Switch Pro    (3 pulses)
@@ -20,14 +21,17 @@
 
 static const char *TAG = "pad_mode";
 
-#define HOLD_US (2 * 1000 * 1000)
+#define HOLD_US (1500 * 1000)
+#define TICK_US (100 * 1000)
 #define FACE (USB_PAD_A | USB_PAD_B | USB_PAD_X | USB_PAD_Y)
 
+/* The controller reports only changes, so a steady hold is timed by a 100 ms tick. */
 static struct {
-    usb_pad_mode_t want;
-    int64_t since;
-    bool latched; /* fired: wait for the buttons to be let go */
+    volatile usb_pad_mode_t want;
+    volatile int64_t since;   /* 0: no combo held */
+    volatile bool latched;    /* fired: wait for the buttons to be let go */
     volatile bool busy;
+    esp_timer_handle_t tick;
 } M;
 
 usb_pad_mode_t pad_mode_load(void)
@@ -66,8 +70,23 @@ static void switch_task(void *arg)
     vTaskDelete(NULL);
 }
 
+static void tick(void *arg)
+{
+    int64_t since = M.since;
+    if (!since || M.latched || M.busy || esp_timer_get_time() - since < HOLD_US) return;
+    M.latched = true;
+    M.busy = true;
+    if (xTaskCreate(switch_task, "pad_mode", 4096, (void *)(intptr_t)M.want, 5, NULL) != pdPASS) M.busy = false;
+}
+
 void pad_mode_filter(usb_pad_state_t *st)
 {
+    if (!M.tick) {
+        const esp_timer_create_args_t args = {.callback = tick, .name = "pad_mode"};
+        if (esp_timer_create(&args, &M.tick) != ESP_OK || esp_timer_start_periodic(M.tick, TICK_US) != ESP_OK) {
+            ESP_LOGE(TAG, "no timer: the mode combos won't work");
+        }
+    }
     uint16_t face = st->buttons & FACE;
     if (!(st->buttons & USB_PAD_GUIDE) || !face) {
         M.since = 0;
@@ -80,15 +99,12 @@ void pad_mode_filter(usb_pad_state_t *st)
                           : face == USB_PAD_X ? USB_PAD_SWITCH
                           : face == USB_PAD_Y ? USB_PAD_HID
                                               : USB_PAD_MODE_COUNT;
-    int64_t now = esp_timer_get_time();
-    if (want == USB_PAD_MODE_COUNT || M.latched) return;
-    if (!M.since || want != M.want) {
-        M.want = want;
-        M.since = now;
+    if (want == USB_PAD_MODE_COUNT) { /* two face buttons: not a combo */
+        M.since = 0;
         return;
     }
-    if (now - M.since < HOLD_US || M.busy) return;
-    M.latched = true;
-    M.busy = true;
-    if (xTaskCreate(switch_task, "pad_mode", 4096, (void *)(intptr_t)want, 5, NULL) != pdPASS) M.busy = false;
+    if (!M.since || want != M.want) {
+        M.want = want;
+        M.since = esp_timer_get_time();
+    }
 }
