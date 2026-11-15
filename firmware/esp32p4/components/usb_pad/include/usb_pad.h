@@ -5,6 +5,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -19,7 +20,12 @@ typedef struct {
 /* The host's rumble levels, 0..255 (large = left motor, small = right). Called from the USB task. */
 typedef void (*usb_pad_rumble_cb_t)(uint8_t large, uint8_t small, void *arg);
 
-esp_err_t usb_pad_start(usb_pad_rumble_cb_t rumble_cb, void *arg);
+/* audio: also be USB headphones (UAC2, 48 kHz 16-bit stereo, the host's volume and mute), a
+ * composite device next to the gamepad; usb_pad_audio_read() returns what the host plays. */
+esp_err_t usb_pad_start(usb_pad_rumble_cb_t rumble_cb, void *arg, bool audio);
 /* Queue a report; sent now if the IN endpoint is free, else as soon as it is. Thread-safe. */
 void usb_pad_send(const usb_pad_state_t *state);
 bool usb_pad_mounted(void);
+/* Up to max_frames interleaved stereo frames the host played (volume applied), waiting up to
+ * timeout_ms for the first. 0 while the host plays nothing. */
+size_t usb_pad_audio_read(int16_t *pcm, size_t max_frames, uint32_t timeout_ms);

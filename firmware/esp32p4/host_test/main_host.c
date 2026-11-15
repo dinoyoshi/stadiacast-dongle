@@ -2,7 +2,11 @@
  * STADIA_ALLOW_CLEARCUT=1 answers Clearcut instead of refusing it, as the fake controller expects.
  * STADIA_START_GAME=1 sends StartGame once READY (run the fake controller with --game).
  * Rumble test: pressing A starts both motors; 6 s after A is released they stop, so a held
- * level outlives the controller's 5 s haptics watchdog only through our refreshes. */
+ * level outlives the controller's 5 s haptics watchdog only through our refreshes.
+ * STADIA_AUDIO=1 opens the headset audio route and plays a 440 Hz tone into it, 10 ms at a time
+ * as a USB host would (the fake controller counts the frames it would play). */
+#include <math.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +37,25 @@ static void on_pad(const stadia_pad_t *pad, void *arg)
     a_was = a;
 }
 
+static void *tone_thread(void *arg)
+{
+    static int16_t pcm[480 * 2];
+    double phase = 0;
+    long long next = now_ms();
+    for (;;) {
+        for (int i = 0; i < 480; i++) {
+            int16_t v = (int16_t)(8000 * sin(phase));
+            pcm[2 * i] = pcm[2 * i + 1] = v;
+            phase += 2 * M_PI * 440 / 48000;
+        }
+        stadia_audio_pcm(pcm, 480);
+        next += 10;
+        long long wait = next - now_ms();
+        if (wait > 0) usleep((useconds_t)wait * 1000);
+    }
+    return NULL;
+}
+
 int main(int argc, char **argv)
 {
     uint16_t rtc_port = (uint16_t)(argc > 3 ? atoi(argv[3]) : 40000);
@@ -43,10 +66,18 @@ int main(int argc, char **argv)
         .game_port = (uint16_t)(argc > 4 ? atoi(argv[4]) : rtc_port + 1),
         .start_game = getenv("STADIA_START_GAME") != NULL,
         .allow_clearcut = getenv("STADIA_ALLOW_CLEARCUT") != NULL,
+        .audio = getenv("STADIA_AUDIO") != NULL,
     };
     stadia_set_pad_callback(on_pad, NULL);
     if (!stadia_start(&cfg)) {
         return 1;
+    }
+    if (cfg.audio) {
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setstacksize(&attr, STADIA_AUDIO_STACK);
+        pthread_t t;
+        pthread_create(&t, &attr, tone_thread, NULL);
     }
     fprintf(stderr, "stadia_host: ready\n");
     for (;;) {

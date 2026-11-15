@@ -9,8 +9,11 @@
  *   - "answer queued" and "GMsg #1 delivered": the controller has our WebRTC answer
  *   - "display: DTLS connected", "display state: ready", then "StartGame" and "game session
  *     connected": the controller is up and its input goes to the USB gamepad
- * The USB gamepad (an Xbox 360 controller to the host) is on the board's high-speed USB-C port;
- * the other USB-C port stays the serial console and programming port.
+ *   - "SetAudioMode answered" and "headset audio route open": what the computer plays on the
+ *     "Stadiacast Dongle" headphones goes to the controller's headset jack
+ * The USB gamepad (an Xbox 360 controller to the host) and the USB headphones are on the
+ * board's high-speed USB-C port; the other USB-C port stays the serial console and programming
+ * port.
  */
 #include <stdio.h>
 
@@ -20,7 +23,10 @@
 
 #include "esp_event.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "nvs_flash.h"
+#include "sdkconfig.h"
 
 static const char *TAG = "dongle";
 
@@ -46,6 +52,19 @@ static void on_rumble(uint8_t large, uint8_t small, void *arg)
     stadia_rumble((uint16_t)(large * 257), (uint16_t)(small * 257));
 }
 
+#if CONFIG_DONGLE_USB_AUDIO
+/* The USB headphones' samples to the controller's headset jack: 10 ms at a time, encoded into
+ * Opus by stadia_audio_pcm() every 20 ms (hence the stack). */
+static void audio_task(void *arg)
+{
+    static int16_t pcm[480 * 2];
+    for (;;) {
+        size_t n = usb_pad_audio_read(pcm, 480, 100);
+        if (n) stadia_audio_pcm(pcm, n);
+    }
+}
+#endif
+
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -57,7 +76,12 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    if (usb_pad_start(on_rumble, NULL) != ESP_OK) {
+#if CONFIG_DONGLE_USB_AUDIO
+    bool audio = true;
+#else
+    bool audio = false;
+#endif
+    if (usb_pad_start(on_rumble, NULL, audio) != ESP_OK) {
         ESP_LOGE(TAG, "no USB gamepad, see above");
     }
     stadia_set_pad_callback(on_pad, NULL);
@@ -76,10 +100,17 @@ void app_main(void)
         .rtc_port = 40000,
         .game_port = 40001,
         .start_game = true,
+        .audio = audio,
+#if CONFIG_DONGLE_USB_AUDIO
+        .audio_complexity = CONFIG_DONGLE_OPUS_COMPLEXITY,
+#endif
     };
     if (!stadia_start(&cfg)) {
         ESP_LOGE(TAG, "a server did not start, see above");
     }
 
+#if CONFIG_DONGLE_USB_AUDIO
+    xTaskCreate(audio_task, "audio", STADIA_AUDIO_STACK, NULL, 6, NULL);
+#endif
     ESP_LOGI(TAG, "ready: wake the controller (about 1 s press of the Stadia button)");
 }

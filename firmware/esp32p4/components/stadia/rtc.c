@@ -6,11 +6,14 @@
  *            answered, input notifications decoded
  *   game     StartGame 1 s after READY; the controller's ProxyRequest (InitializationRequest)
  *            answered with the game link's parameters (game.c)
+ *   audio    SetAudioModeRequest(mode 2) at READY, then the headset frames as SRTP on the
+ *            display link's pair (audio.c)
  *
  * Everything on the sockets runs in one task, so only the remote descriptions and the
  * callbacks need the lock.
  */
 #include "game.h"
+#include "audio.h"
 #include "rtc_link.h"
 #include "stadia_internal.h"
 #include "stadia_pb.h"
@@ -28,12 +31,15 @@ enum { RPC_OK = 0, RPC_INVALID_ARGUMENT = 3, RPC_UNIMPLEMENTED = 12 };
 enum { C2D_PROXY_REQUEST = 1, C2D_CONTROLLER_STATE = 2, C2D_INPUT = 3, C2D_AUDIO_CONFIG = 4, C2D_DISCONNECT = 8,
        C2D_BATTERY = 10, C2D_KEEPALIVE = 14, C2D_GET_CURRENT_TIME = 18 };
 /* DisplayToController fields */
-enum { D2C_PROXY_RESPONSE = 1, D2C_GET_CONTROLLER_STATE = 2, D2C_START_GAME = 8, D2C_CURRENT_TIME = 21 };
+enum { D2C_PROXY_RESPONSE = 1, D2C_GET_CONTROLLER_STATE = 2, D2C_START_GAME = 8, D2C_SET_AUDIO_MODE = 16,
+       D2C_CURRENT_TIME = 21 };
+enum { AUDIO_MODE_WEBRTC_OPUS = 2 };
 
 #define DISPLAY_RPC_DELAY_MS 600
 #define DISPLAY_RPC_INTERVAL_MS 1500
 #define DISPLAY_RPC_WINDOW_MS (300 * 1000)
 #define START_GAME_DELAY_MS 1000
+#define AUDIO_ROUTE_WAIT_MS 1000 /* frames go out after the SetAudioMode answer, or this long after it */
 
 typedef enum { DS_NONE, DS_DTLS, DS_ASKED, DS_STATE, DS_READY, DS_INPUT } display_state_t;
 static const char *const DS_NAMES[] = {"none", "dtls-connected", "get-controller-state-sent",
@@ -52,6 +58,10 @@ static struct {
     uint32_t start_ticket;
     int64_t start_at;
     char game_key[24];
+    /* SetAudioMode */
+    bool audio_sent, audio_answered;
+    uint32_t audio_ticket;
+    int64_t audio_at;
 } D;
 
 /* ---- display RPCs ------------------------------------------------------------------- */
@@ -109,6 +119,24 @@ static void send_start_game(void)
     D.start_sent = true;
     send_rpc(1, D.start_ticket, 0, NULL, m.buf, m.len);
     SLOGI(TAG, "StartGame %s sent", D.game_key);
+}
+
+/* DisplayToController #16 SetAudioModeRequest {1 mode: 2, 3 f3: true}: the WebRTC Opus route to
+ * the headset jack. Without it the controller takes the RTP and plays nothing. */
+static void send_set_audio_mode(void)
+{
+    uint8_t am[8], msg[16];
+    pbw_t a = PBW(am, sizeof(am));
+    pbw_uint(&a, 1, AUDIO_MODE_WEBRTC_OPUS);
+    pbw_uint(&a, 3, 1);
+    pbw_t m = PBW(msg, sizeof(msg));
+    pbw_bytes(&m, D2C_SET_AUDIO_MODE, a.buf, a.len);
+    D.audio_ticket = ++D.ticket;
+    D.audio_at = port_now_ms();
+    D.audio_sent = true;
+    D.audio_answered = false;
+    send_rpc(1, D.audio_ticket, 0, NULL, m.buf, m.len);
+    SLOGI(TAG, "SetAudioMode(WebRTC Opus) sent");
 }
 
 static int32_t zigzag(uint64_t v)
@@ -245,6 +273,10 @@ static void on_rpc(const uint8_t *data, size_t len)
         } else {
             SLOGI(TAG, "notification ControllerToDisplay #%u", (unsigned)variant.field);
         }
+    } else if (rpc.kind == 2 && D.audio_sent && rpc.ticket == D.audio_ticket) {
+        /* a repeat in the same boot is FAILED_PRECONDITION ("already in WebRTC Opus mode"): open too */
+        SLOGI(TAG, "SetAudioMode answered: code %u%s", (unsigned)rpc.code, rpc.code == 9 ? " (already open)" : "");
+        D.audio_answered = true;
     } else if (rpc.kind == 2 && D.start_sent && rpc.ticket == D.start_ticket) {
         char msg[96] = "";
         pbf_t body;
@@ -322,11 +354,14 @@ static void display_on_connected(rtc_link_t *L)
     D.state_reqs = 0;
     D.ready_at = 0;
     D.start_sent = false;
+    D.audio_sent = false;
+    audio_set_route(false);
 }
 
 static void display_on_closed(rtc_link_t *L)
 {
     D.state = DS_NONE;
+    audio_set_route(false);
     stadia_pad_t released = {.connected = false};
     pad_report(&released, "rtc");
 }
@@ -354,6 +389,12 @@ static void display_tick(void)
         now - D.ready_at >= START_GAME_DELAY_MS) {
         send_start_game();
     }
+    /* the headset audio route: asked for at READY (before StartGame, as stadiacast does) */
+    if (g_cfg.audio && rtc_link_up(&D.link) && D.ready_at && !D.audio_sent) send_set_audio_mode();
+    if (D.audio_sent && rtc_link_up(&D.link) && (D.audio_answered || now - D.audio_at >= AUDIO_ROUTE_WAIT_MS)) {
+        audio_set_route(true);
+    }
+    audio_tick(&D.link);
 }
 
 static void poll_socket(rtc_link_t *L, uint8_t *buf, size_t cap)
@@ -374,7 +415,7 @@ static void rtc_task(void *arg)
         FD_SET(D.link.sock, &fds);
         FD_SET(G->sock, &fds);
         int maxfd = D.link.sock > G->sock ? D.link.sock : G->sock;
-        struct timeval tv = {.tv_sec = 0, .tv_usec = 20 * 1000};
+        struct timeval tv = {.tv_sec = 0, .tv_usec = audio_poll_ms() * 1000};
         int r = select(maxfd + 1, &fds, NULL, NULL, &tv);
         if (r > 0 && FD_ISSET(D.link.sock, &fds)) poll_socket(&D.link, buf, sizeof(buf));
         if (r > 0 && FD_ISSET(G->sock, &fds)) poll_socket(G, buf, sizeof(buf));
@@ -392,6 +433,7 @@ void rtc_set_remote(const remote_offer_t *remote)
 bool rtc_start(uint16_t display_port, uint16_t game_port)
 {
     if (!rtc_link_global_init()) return false;
+    audio_init(&g_cfg);
     if (!rtc_link_init(&D.link, "display", display_port, &DISPLAY_OPS)) return false;
     const rtc_identity_t *id = rtc_identity();
     rtc_link_set_credentials(&D.link, id->ufrag, id->pwd);

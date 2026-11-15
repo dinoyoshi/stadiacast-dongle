@@ -11,6 +11,13 @@ set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 set(MBEDTLS_USER_CONFIG_FILE "${CMAKE_CURRENT_LIST_DIR}/mbedtls_host_config.h" CACHE STRING "" FORCE)
 add_subdirectory(${MBEDTLS_DIR} mbedtls EXCLUDE_FROM_ALL)
 
+# libopus as the board builds it (fixed point), without the sanitizers
+include(${CMAKE_CURRENT_LIST_DIR}/../components/opus/opus.cmake)
+add_library(opus STATIC ${OPUS_SRCS})
+target_include_directories(opus PRIVATE ${OPUS_PRIV_INCLUDES} PUBLIC ${OPUS_DIR}/include)
+target_compile_definitions(opus PRIVATE ${OPUS_DEFS})
+target_compile_options(opus PRIVATE -w -O2)
+
 set(CORE ${CMAKE_CURRENT_LIST_DIR}/../components/stadia)
 include(${CORE}/embed_certs.cmake)
 stadia_embed_certs(${CORE}/certs ${CMAKE_CURRENT_BINARY_DIR}/gen)
@@ -18,9 +25,9 @@ stadia_embed_certs(${CORE}/certs ${CMAKE_CURRENT_BINARY_DIR}/gen)
 add_executable(stadia_host
     main_host.c
     ${CORE}/pb.c ${CORE}/https.c ${CORE}/receiver.c ${CORE}/signaling.c
-    ${CORE}/rtc_identity.c ${CORE}/rtc.c ${CORE}/rtc_link.c ${CORE}/game.c ${CORE}/dns_sink.c ${CORE}/sntp.c ${CORE}/port_posix.c)
+    ${CORE}/rtc_identity.c ${CORE}/rtc.c ${CORE}/rtc_link.c ${CORE}/game.c ${CORE}/audio.c ${CORE}/srtp.c ${CORE}/dns_sink.c ${CORE}/sntp.c ${CORE}/port_posix.c)
 target_include_directories(stadia_host PRIVATE ${CORE}/include ${CMAKE_CURRENT_BINARY_DIR}/gen)
 target_compile_options(stadia_host PRIVATE -Wall -Wextra -Wno-unused-parameter -g -fsanitize=address,undefined)
 target_link_options(stadia_host PRIVATE -fsanitize=address,undefined)
 target_compile_definitions(stadia_host PRIVATE MBEDTLS_USER_CONFIG_FILE="${MBEDTLS_USER_CONFIG_FILE}")
-target_link_libraries(stadia_host PRIVATE mbedtls mbedx509 mbedcrypto pthread z)
+target_link_libraries(stadia_host PRIVATE mbedtls mbedx509 mbedcrypto opus pthread z m)

@@ -326,6 +326,7 @@ static void dtls_reset(rtc_link_t *L)
         mbedtls_ssl_config_free(&L->conf);
     }
     L->dtls_on = L->dtls_up = L->srtp_ready = false;
+    srtp_tx_free(&L->srtp_out);
     L->timer_fin = 0;
     if (was_up && L->ops->on_closed) L->ops->on_closed(L);
 }
@@ -382,6 +383,8 @@ static void on_dtls_connected(rtc_link_t *L)
     if (srtp.MBEDTLS_PRIVATE(chosen_dtls_srtp_profile) != MBEDTLS_TLS_SRTP_UNSET) {
         L->srtp_ready = mbedtls_ssl_tls_prf(L->prf, L->master, sizeof(L->master), "EXTRACTOR-dtls_srtp", L->randbytes,
                                             sizeof(L->randbytes), L->srtp_keys, sizeof(L->srtp_keys)) == 0;
+        /* we are the DTLS server: our packets use the server write key (16..32) and salt (46..60) */
+        if (L->srtp_ready) srtp_tx_init(&L->srtp_out, L->srtp_keys + 16, L->srtp_keys + 46);
     }
     SLOGI(TAG, "%s: DTLS connected: %s, SRTP %s, peer fingerprint %s", L->name, mbedtls_ssl_get_ciphersuite(&L->ssl),
           L->srtp_ready ? "AES128_CM_SHA1_80 keys exported" : "not negotiated", fp_ok ? "verified" : "MISMATCH");
@@ -458,6 +461,15 @@ bool rtc_link_send_record(rtc_link_t *L, const uint8_t *payload, size_t len)
         SLOGW(TAG, "%s: DTLS write failed: -0x%04x", L->name, (unsigned)-r);
         return false;
     }
+    return true;
+}
+
+bool rtc_link_send_srtp(rtc_link_t *L, uint8_t *pkt, size_t len, size_t cap)
+{
+    if (!L->dtls_up || !L->srtp_ready || !L->selected) return false;
+    size_t n = srtp_protect(&L->srtp_out, pkt, len, cap);
+    if (!n) return false;
+    send_to(L, &L->peer, pkt, n);
     return true;
 }
 

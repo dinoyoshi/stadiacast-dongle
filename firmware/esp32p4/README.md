@@ -11,7 +11,7 @@ The Python code at the top of this repository stays as the reference implementat
 | 2a | HTTPS with the built-in certificate, the boot endpoints, discovery RPCs and GMsg: the controller receives our WebRTC answer | done: tested on the board |
 | 2b | STUN/DTLS on UDP 40000, display RPCs up to READY: input on the serial log | done: tested on the board, button names match |
 | 3 | StartGame and the game session on UDP 40001; a USB Xbox 360 controller with rumble | done: tested on the board with Linux (xpad): all inputs, rumble held 8 s |
-| 4 | USB sound card feeding the controller's headset jack | |
+| 4 | USB headphones feeding the controller's headset jack (Opus over SRTP) | built, tested on a PC against the fake controller; board test next |
 
 ## Build and flash
 
@@ -19,6 +19,7 @@ You need [ESP-IDF v5.5](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/es
 The extension for VS Code installs it in a few clicks.
 
 ```sh
+git submodule update --init       # once: libopus, in components/opus/libopus
 cd firmware/esp32p4
 idf.py set-target esp32p4
 idf.py build
@@ -27,7 +28,8 @@ idf.py -p <port> flash monitor     # the USB-C port marked for programming / CDC
 
 The first build downloads `esp_hosted`, `esp_wifi_remote` and `esp_tinyusb` from the Espressif
 component registry. `idf.py menuconfig` → *Stadiacast dongle* changes the hotspot's name, password and
-channel. The defaults are `stadiacast-dongle` / `stadiacast` on channel 6.
+channel. The defaults are `stadiacast-dongle` / `stadiacast` on channel 6. The same menu turns the
+USB headphones off (gamepad only) and sets the Opus encoder's complexity (default 5).
 
 ## What step 1 should print
 
@@ -101,6 +103,38 @@ Mapping: the Stadia button is the Xbox (guide) button, Menu is Start, Options is
 and Capture have no XInput equivalent. Sticks are passed through raw (no deadzone, as a real
 pad), triggers 0 to 255.
 
+## Step 4: headset audio
+
+The same OTG port is also **USB headphones** ("Stadiacast Dongle", 48 kHz 16-bit stereo, with
+volume and mute), so the device is composite: the gamepad plus a USB Audio Class 2.0 sound card,
+which Windows 10+, macOS, Linux and Android support without a driver. Whatever the computer
+plays there goes to the controller's 3.5 mm headset jack:
+
+```
+USB (1 ms packets) -> 20 ms frames -> Opus 64 kbps (libopus, fixed point) -> RTP PT 111
+  -> SRTP (the display link's DTLS keys) -> UDP to the controller, on the display link's pair
+```
+
+At READY the board sends `SetAudioModeRequest(mode 2)` (without it the controller drops the
+audio), and once that is answered the frames go out. Pick "Stadiacast Dongle" as the output
+device and plug headphones into the controller.
+
+```
+usb_pad: Xbox 360 style gamepad and USB headphones (48 kHz stereo) on the high-speed USB-C port
+...
+rtc: display state: ready
+rtc: SetAudioMode(WebRTC Opus) sent
+rtc: SetAudioMode answered: code 0
+audio: headset audio route open: sending
+usb_audio: the host started playing
+audio: Opus libopus 1.5.2-fixed: 48 kHz stereo, 20 ms, 64 kbps, complexity 5, ... bytes of state
+audio: 500 frames sent in 10 s (160 B avg), 0 not sent, 0 trimmed; encode avg ... us, max ... us
+```
+
+The frames follow the USB host's clock (one per 20 ms it plays); a pause leaves a gap of the same
+length in the RTP timestamps, as audio.py's pacer does. The hotspot is not changed for audio yet:
+if it stutters, the first thing to try is a DTIM period of 1 on the C6 SoftAP.
+
 ## Testing on a PC
 
 `components/stadia/` is plain C on BSD sockets and mbedTLS, so it also builds for Linux and
@@ -117,6 +151,11 @@ For the game session, start the host build with `STADIA_START_GAME=1` and run th
 controller with `--game 12`. The host build turns pressing A into rumble and stops it 6 s after
 A is released, so the fake controller shows the motors starting, staying on through the 5 s
 haptics watchdog (our 2 s refreshes), and stopping.
+
+With `STADIA_AUDIO=1` the host build also opens the headset audio route and plays a 440 Hz tone;
+the fake controller (`--game`) ends with a line on what its jack got: frames played (SRTP
+checked), their SSRC, sequence gaps and timestamp steps (all 960). The host build compiles the
+same libopus as the board.
 
 ## If the Wi-Fi doesn't come up
 

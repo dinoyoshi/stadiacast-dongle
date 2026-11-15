@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import ipaddress
+import itertools
 import secrets
 import ssl
 import sys
@@ -1055,6 +1056,26 @@ async def run_cli(args) -> int:
     return 0
 
 
+def audio_summary(fc: FakeController) -> str:
+    """What the headset jack got: frames played (SRTP verified by the endpoint), their stream and
+    whether sequence numbers and timestamps follow the 20 ms grid."""
+    frames = fc.audio_frames
+    if not frames:
+        return f"audio: no frames played ({fc.audio_unplayed} unplayed, route open: {fc.audio_route_open})"
+    ssrcs = {f"{p.ssrc:08x}" for p in frames}
+    seq_gaps = sum(1 for a, b in itertools.pairwise(frames) if (b.seq - a.seq) & 0xFFFF != 1)
+    steps: dict[int, int] = {}
+    for a, b in itertools.pairwise(frames):
+        d = (b.timestamp - a.timestamp) & 0xFFFFFFFF
+        steps[d] = steps.get(d, 0) + 1
+    sizes = [len(p.payload) for p in frames]
+    return (
+        f"audio: {len(frames)} frames played ({fc.audio_unplayed} unplayed), ssrc {','.join(sorted(ssrcs))}, "
+        f"pt {frames[0].payload_type}, {seq_gaps} sequence gaps, timestamp steps {dict(sorted(steps.items()))}, "
+        f"payload {min(sizes)}..{max(sizes)} B"
+    )
+
+
 async def run_game(fc: FakeController, args, t0: float) -> int:
     """--game SECONDS: stay in READY (keepalive 1.5 s, time 3 s) waiting for the receiver's
     StartGame, run the game session, send input on it, then keep the session up for
@@ -1103,6 +1124,7 @@ async def run_game(fc: FakeController, args, t0: float) -> int:
             f"{fc.watchdog_expired} watchdog stops, {fc.game_framing_errors} framing errors",
             flush=True,
         )
+        print(f"[{time.monotonic() - t0:7.3f}] {audio_summary(fc)}", flush=True)
     finally:
         traffic.cancel()
         fc.close()
