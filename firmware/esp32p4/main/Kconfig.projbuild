@@ -1,0 +1,20 @@
+menu "Stadiacast dongle"
+
+config DONGLE_SSID
+    string "Hotspot SSID"
+    default "stadiacast-dongle"
+    help
+        Network the Stadia controller joins. Provision the controller with this name
+        (stadiacast-provision) and use the same name and password for the PC hotspot,
+        so the controller works with either.
+
+config DONGLE_PASSWORD
+    string "Hotspot password (WPA2, 8 to 63 characters)"
+    default "stadiacast"
+
+config DONGLE_CHANNEL
+    int "Wi-Fi channel"
+    range 1 13
+    default 6
+
+endmenu
