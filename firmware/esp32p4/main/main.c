@@ -89,6 +89,7 @@ void app_main(void)
         ESP_LOGE(TAG, "no USB gamepad, see above");
     }
     stadia_set_pad_callback(on_pad, NULL);
+    pad_mode_start();
 
     c6_update_if_needed();
     esp_netif_t *ap = hotspot_start();

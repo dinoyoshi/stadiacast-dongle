@@ -4,6 +4,7 @@
  *   fast blink   starting up (or updating the C6), the hotspot is not up yet
  *   slow blink   ready: wake the controller
  *   steady on    the controller is connected
+ *   n blinks     the gamepad mode just picked (1 Xbox 360, 2 DualShock 4, 3 Switch Pro, 4 HID)
  */
 #include "dongle.h"
 
@@ -16,11 +17,19 @@
 
 static volatile led_state_t s_state = LED_STARTING;
 static uint32_t s_tick;
+static volatile int s_flash; /* ticks left of a status_led_flash() pattern */
+static volatile int s_flash_len;
 
 static void tick(void *arg)
 {
     s_tick++;
     int on;
+    if (s_flash > 0) { /* n blinks of 200 ms on, 200 ms off, then 600 ms dark */
+        int t = s_flash_len - s_flash--;
+        on = t < s_flash_len - 6 && (t % 4) < 2;
+        gpio_set_level(CONFIG_DONGLE_STATUS_LED_GPIO, on);
+        return;
+    }
     switch (s_state) {
     case LED_STARTING: on = s_tick & 1; break;          /* 5 Hz */
     case LED_WAITING: on = (s_tick % 10) < 5; break;    /* 1 Hz */
@@ -39,6 +48,12 @@ void status_led_start(void)
         ESP_LOGW("led", "no status LED on GPIO%d", CONFIG_DONGLE_STATUS_LED_GPIO);
     }
 #endif
+}
+
+void status_led_flash(int n)
+{
+    s_flash_len = n * 4 + 6;
+    s_flash = s_flash_len;
 }
 
 void status_led_set(led_state_t state)

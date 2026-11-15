@@ -180,8 +180,9 @@ dongle. The LED is GPIO3; `idf.py menuconfig` → *Stadiacast dongle* moves or t
 
 The dongle can be four kinds of USB controller. Hold the **Stadia button with a face button for
 1.5 s** (not 4 s: that turns the controller off). The board leaves USB, comes back as the new
-controller, and pulses the controller's motors once per mode number. It remembers the choice
-for the next power-up.
+controller, and pulses the controller's motors once per mode number. A press of the board's
+**BOOT button** steps to the next mode instead, with or without the controller. Either way the
+board's LED blinks the mode number, and the board remembers the choice for the next power-up.
 
 | combo | mode | for | rumble | headphones |
 |---|---|---|---|---|
