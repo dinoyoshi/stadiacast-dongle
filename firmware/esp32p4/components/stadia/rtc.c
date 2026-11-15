@@ -522,3 +522,14 @@ bool rtc_start(uint16_t display_port, uint16_t game_port)
     if (!game_init(game_port)) return false;
     return port_spawn(rtc_task, NULL, "rtc", 20 * 1024);
 }
+
+void stadia_get_stats(stadia_stats_t *st)
+{
+    *st = (stadia_stats_t){.mic_age_ms = -1};
+    display_state_t ds = D.state;
+    st->display_state = DS_NAMES[ds <= DS_INPUT ? ds : DS_NONE];
+    st->display_up = rtc_link_up(&D.link);
+    st->game_up = rtc_link_up(game_link());
+    audio_get_stats(st);
+    if (g_cfg.mic) mic_get_stats(st);
+}

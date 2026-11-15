@@ -72,6 +72,8 @@ static struct {
     uint16_t mic_per_packet;        /* 48 at full speed, 6 at high speed */
     volatile uint32_t mic_packets, mic_underruns, mic_skips, mic_dropped, mic_written;
     int64_t mic_report_at;
+    /* the same, from power-up, for the console (usb_pad_audio_stats) */
+    volatile uint32_t t_packets, t_failed, t_overflows, t_mic_packets, t_mic_underruns, t_mic_skips, t_mic_dropped;
 } U;
 
 static void update_gain(int fu)
@@ -158,11 +160,13 @@ static uint16_t mic_packet(void)
         tail = head - MIC_PRIME_MS * 48;
         avail = MIC_PRIME_MS * 48;
         U.mic_skips++;
+        U.t_mic_skips++;
     }
     if (!U.mic_primed && avail >= MIC_PRIME_MS * 48) U.mic_primed = true;
     if (U.mic_primed && avail < want) {
         U.mic_primed = false;
         U.mic_underruns++;
+        U.t_mic_underruns++;
     }
     int32_t g = U.gain[FU_MIC];
     for (uint32_t i = 0; i < want; i++) {
@@ -175,6 +179,7 @@ static uint16_t mic_packet(void)
     }
     U.mic_tail = tail;
     U.mic_packets++;
+    U.t_mic_packets++;
     return (uint16_t)(want * 2);
 }
 
@@ -318,14 +323,16 @@ static bool uac_xfer_isr(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, 
     if (ep_addr != USB_AUDIO_EP_OUT) return false;
     BaseType_t woken = pdFALSE;
     n &= ~3u;
-    if (result != XFER_RESULT_SUCCESS) U.failed++;
+    if (result != XFER_RESULT_SUCCESS) U.failed++, U.t_failed++;
     U.packets++;
+    U.t_packets++;
     U.bytes += n;
     if (result == XFER_RESULT_SUCCESS && n && U.alt == 1) {
         if (xStreamBufferSpacesAvailable(U.ring) >= n) {
             xStreamBufferSendFromISR(U.ring, s_buf.out, n, &woken);
         } else {
             U.overflows++;
+            U.t_overflows++;
         }
     }
     if (U.alt == 1) usbd_edpt_xfer(rhport, USB_AUDIO_EP_OUT, s_buf.out, USB_AUDIO_EP_SIZE, true);
@@ -383,6 +390,7 @@ void usb_pad_mic_write(const int16_t *pcm, size_t frames)
     uint32_t space = MIC_RING - 1 - (head - U.mic_tail);
     if (frames > space) { /* nobody is reading (the host is not recording): keep the newest */
         U.mic_dropped += (uint32_t)(frames - space);
+        U.t_mic_dropped += (uint32_t)(frames - space);
         if (U.mic_alt != 1) {
             U.mic_tail = head; /* the reader is idle: the writer may move it */
             space = MIC_RING - 1;
@@ -403,4 +411,22 @@ void usb_pad_mic_write(const int16_t *pcm, size_t frames)
         U.mic_written = U.mic_packets = U.mic_underruns = U.mic_skips = 0;
         U.mic_report_at = now;
     }
+}
+
+void usb_pad_audio_stats(usb_pad_audio_stats_t *st)
+{
+    *st = (usb_pad_audio_stats_t){
+        .playing = U.alt == 1,
+        .recording = U.mic_alt == 1,
+        .mute = {U.mute[FU_SPK], U.mute[FU_MIC]},
+        .volume = {U.volume[FU_SPK], U.volume[FU_MIC]},
+        .packets = U.t_packets,
+        .failed = U.t_failed,
+        .overflows = U.t_overflows,
+        .mic_packets = U.t_mic_packets,
+        .mic_underruns = U.t_mic_underruns,
+        .mic_skips = U.t_mic_skips,
+        .mic_dropped = U.t_mic_dropped,
+        .mic_buffered = U.mic_head - U.mic_tail,
+    };
 }

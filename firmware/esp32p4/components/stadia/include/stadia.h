@@ -81,3 +81,24 @@ void stadia_set_mic_callback(stadia_mic_cb_t cb, void *arg);
  * tick of the rtc task. Not saved: whoever calls it keeps the setting. */
 void stadia_mic_set_push_to_talk(bool on);
 bool stadia_mic_push_to_talk(void);
+
+/* What the controller session is doing, for the console. Counters run from power-up; the
+ * maximum and the peak are since the previous call. */
+typedef struct {
+    const char *display_state; /* none, dtls-connected, ..., ready, input */
+    bool display_up, game_up;  /* the display link and the game session (DTLS up) */
+    bool audio_route;          /* headset frames go to the controller */
+    uint8_t audio_complexity;
+    uint32_t audio_encoded, audio_sent, audio_not_sent, audio_trimmed, audio_underruns, audio_resyncs;
+    uint64_t audio_bytes, audio_enc_us; /* Opus bytes out, encoder time */
+    uint32_t audio_enc_us_max;
+    uint32_t mic_packets, mic_muted, mic_decoded, mic_lost, mic_errors, mic_dropped;
+    int mic_peak;           /* loudest decoded sample, 0..32767 */
+    int32_t mic_age_ms;     /* since the last microphone packet, -1 before any */
+    bool mic_talking;       /* push to talk: Assistant held (or just let go) */
+} stadia_stats_t;
+void stadia_get_stats(stadia_stats_t *st);
+
+/* The headset encoder's Opus complexity (1..10), changed at run time: it applies from the next
+ * 20 ms frame. */
+void stadia_audio_set_complexity(int complexity);

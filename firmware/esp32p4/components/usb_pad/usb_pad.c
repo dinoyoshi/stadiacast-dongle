@@ -25,6 +25,7 @@
 #include "usb_pad.h"
 #include "pad_modes.h"
 #include "usb_audio.h"
+#include "usb_console.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -43,7 +44,7 @@ static const char *TAG = "usb_pad";
 #define PAD_EP_IN 0x81
 #define PAD_EP_OUT 0x01
 #define PAD_EP_SIZE 64
-#define CONFIG_MAX 384
+#define CONFIG_MAX 448
 
 /* Xbox 360 with the headphones: an ID no Windows driver claims for the whole device. pid.codes'
  * test PID; xpad matches vendor 1209 with an FF/5D/01 interface (Linux 5.12+). */
@@ -63,6 +64,7 @@ static const char *s_strings[] = {
     "Stadiacast Dongle",
     NULL, /* serial: from the chip's MAC */
     "Controller headset",
+    "Stadiacast console",
 };
 
 /* The binary device object store: one capability, the Microsoft OS 2.0 platform descriptor. */
@@ -88,6 +90,10 @@ static const uint8_t s_audio_fs[] = {USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_FS, USB
 static const uint8_t s_audio_hs[] = {USB_AUDIO_DESC(1, USB_AUDIO_EP_SIZE_HS, USB_MIC_EP_SIZE_HS)};
 _Static_assert(sizeof(s_audio_hs) == USB_AUDIO_DESC_LEN, "audio descriptor length");
 
+_Static_assert(sizeof((uint8_t[]){USB_CONSOLE_DESC(0, USB_CONSOLE_EP_SIZE_HS, 8)}) == USB_CONSOLE_DESC_LEN,
+               "console descriptor length");
+_Static_assert(9 + 50 + USB_AUDIO_DESC_LEN + USB_CONSOLE_DESC_LEN <= CONFIG_MAX, "configuration buffer");
+
 /* ---- state -------------------------------------------------------------------------- */
 
 typedef struct {
@@ -100,6 +106,7 @@ CFG_TUD_MEM_SECTION static pad_epbuf_t s_buf;
 static struct {
     usb_pad_mode_t mode;
     bool audio_ok, audio; /* audio_ok: the headphones can work; audio: in this mode's descriptors */
+    bool console;         /* the console's serial port follows the gamepad (and the headset) */
     bool msos;            /* the BOS and Microsoft OS 2.0 descriptors are on (Xbox 360 + audio) */
     uint8_t rhport;
     volatile bool open;
@@ -122,9 +129,10 @@ static void build_descriptors(void)
 {
     const pad_mode_info_t *m = pad_mode_info(s.mode);
     s.audio = s.audio_ok && m->audio_ok;
-    uint8_t cls = s.audio ? TUSB_CLASS_MISC : (m->report_desc ? 0x00 : 0xFF);
-    uint8_t sub = s.audio ? MISC_SUBCLASS_COMMON : (m->report_desc ? 0x00 : 0xFF);
-    uint8_t proto = s.audio ? MISC_PROTOCOL_IAD : (m->report_desc ? 0x00 : 0xFF);
+    bool composite = s.audio || s.console;
+    uint8_t cls = composite ? TUSB_CLASS_MISC : (m->report_desc ? 0x00 : 0xFF);
+    uint8_t sub = composite ? MISC_SUBCLASS_COMMON : (m->report_desc ? 0x00 : 0xFF);
+    uint8_t proto = composite ? MISC_PROTOCOL_IAD : (m->report_desc ? 0x00 : 0xFF);
     s.msos = s.audio && !m->report_desc;
     s.device = (tusb_desc_device_t){
         .bLength = sizeof(tusb_desc_device_t),
@@ -191,9 +199,17 @@ static void build_descriptors(void)
             memcpy(c + n, a, USB_AUDIO_DESC_LEN);
             n += USB_AUDIO_DESC_LEN;
         }
-        /* configuration: the gamepad, plus the headset's interfaces; bus powered, 500 mA */
-        const uint8_t head[9] = {9, TUSB_DESC_CONFIGURATION, (uint8_t)(n & 0xFF), (uint8_t)(n >> 8),
-                                 s.audio ? 1 + USB_AUDIO_ITF_COUNT : 1, 1, 0, 0x80, 0xFA};
+        uint8_t itfs = s.audio ? 1 + USB_AUDIO_ITF_COUNT : 1;
+        if (s.console) {
+            const uint8_t k_hs[] = {USB_CONSOLE_DESC(itfs, USB_CONSOLE_EP_SIZE_HS, 8)};
+            const uint8_t k_fs[] = {USB_CONSOLE_DESC(itfs, USB_CONSOLE_EP_SIZE_FS, 16)};
+            memcpy(c + n, hs ? k_hs : k_fs, USB_CONSOLE_DESC_LEN);
+            n += USB_CONSOLE_DESC_LEN;
+            itfs += USB_CONSOLE_ITF_COUNT;
+        }
+        /* configuration: the gamepad, plus the headset's and the console's interfaces; bus
+         * powered, 500 mA */
+        const uint8_t head[9] = {9, TUSB_DESC_CONFIGURATION, (uint8_t)(n & 0xFF), (uint8_t)(n >> 8), itfs, 1, 0, 0x80, 0xFA};
         memcpy(c, head, sizeof(head));
     }
 }
@@ -392,10 +408,12 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_requ
 
 usbd_class_driver_t const *usbd_app_driver_get_cb(uint8_t *driver_count)
 {
-    static usbd_class_driver_t drivers[2];
-    drivers[0] = s_pad_driver;
-    drivers[1] = usb_audio_driver;
-    *driver_count = s.audio ? 2 : 1;
+    static usbd_class_driver_t drivers[3];
+    uint8_t n = 0;
+    drivers[n++] = s_pad_driver;
+    if (s.audio) drivers[n++] = usb_audio_driver;
+    if (s.console) drivers[n++] = usb_console_driver;
+    *driver_count = n;
     return drivers;
 }
 
@@ -449,12 +467,18 @@ static esp_err_t install(void)
     cfg.descriptor.high_speed_config = s.config_hs;
     esp_err_t err = tinyusb_driver_install(&cfg);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "%s gamepad%s on the high-speed USB-C port (%04X:%04X)", pad_mode_info(s.mode)->name,
-                 s.audio ? " and a USB headset (48 kHz stereo headphones, mono microphone)" : "", s.device.idVendor, s.device.idProduct);
+        ESP_LOGI(TAG, "%s gamepad%s%s on the high-speed USB-C port (%04X:%04X)", pad_mode_info(s.mode)->name,
+                 s.audio ? ", a USB headset (48 kHz stereo headphones, mono microphone)" : "",
+                 s.console ? ", the console's serial port" : "", s.device.idVendor, s.device.idProduct);
     } else {
         ESP_LOGE(TAG, "TinyUSB install failed: %s", esp_err_to_name(err));
     }
     return err;
+}
+
+void usb_pad_enable_console(void)
+{
+    s.console = usb_console_init();
 }
 
 esp_err_t usb_pad_start(usb_pad_mode_t mode, usb_pad_rumble_cb_t rumble_cb, void *arg, bool audio)

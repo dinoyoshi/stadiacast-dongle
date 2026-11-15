@@ -49,6 +49,7 @@ static void on_pad(const stadia_pad_t *pad, void *arg)
         pad_mode_filter(&st);
     }
     usb_pad_send(&st);
+    console_pad(&st);
 }
 
 /* The game's rumble (0..255 per motor) to the controller's motors (0..65535). */
@@ -65,7 +66,12 @@ static void audio_task(void *arg)
     static int16_t pcm[480 * 2];
     for (;;) {
         size_t n = usb_pad_audio_read(pcm, 480, 100);
-        if (n) stadia_audio_pcm(pcm, n);
+        if (!n) continue;
+        int32_t g = console_gain_q15(); /* headroom before the encoder (the console's gain) */
+        if (g != 32768) {
+            for (size_t i = 0; i < n * 2; i++) pcm[i] = (int16_t)((pcm[i] * g) >> 15);
+        }
+        stadia_audio_pcm(pcm, n);
     }
 }
 #endif
@@ -95,6 +101,11 @@ void app_main(void)
 #else
     bool audio = false;
 #endif
+    dongle_settings_t set;
+    settings_load(&set);
+#if CONFIG_DONGLE_CONSOLE
+    usb_pad_enable_console();
+#endif
     if (usb_pad_start(pad_mode_load(), on_rumble, NULL, audio) != ESP_OK) {
         ESP_LOGE(TAG, "no USB gamepad, see above");
     }
@@ -120,15 +131,9 @@ void app_main(void)
         .game_port = 40001,
         .start_game = true,
         .audio = audio,
-#if CONFIG_DONGLE_USB_AUDIO
-        .audio_complexity = CONFIG_DONGLE_OPUS_COMPLEXITY,
-#endif
-#if CONFIG_DONGLE_USB_MIC
-        .mic = true,
-#endif
-#if CONFIG_DONGLE_MIC_PUSH_TO_TALK
-        .mic_push_to_talk = true,
-#endif
+        .audio_complexity = set.complexity,
+        .mic = audio && set.mic,
+        .mic_push_to_talk = set.ptt, /* the console's settings, CONFIG_DONGLE_* until it changes them */
     };
     if (!stadia_start(&cfg)) {
         ESP_LOGE(TAG, "a server did not start, see above");
@@ -138,6 +143,9 @@ void app_main(void)
     if (xTaskCreate(audio_task, "audio", STADIA_AUDIO_STACK, NULL, 6, NULL) != pdPASS) {
         ESP_LOGE(TAG, "no memory for the audio task: no headset audio");
     }
+#endif
+#if CONFIG_DONGLE_CONSOLE
+    console_start(cfg.mic);
 #endif
     status_led_set(LED_WAITING);
     ESP_LOGI(TAG, "ready: wake the controller (about 1 s press of the Stadia button)");
