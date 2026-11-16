@@ -84,6 +84,7 @@ and the C6 firmware stay where they are. Delete an old `sdkconfig` first so the 
 | hotspot name / password / channel | `stadiacast-dongle` / `stadiacast` / 6 |
 | USB headphones (off: gamepad only) | on |
 | Opus encoder complexity | 8 |
+| Opus encoder complexity while the microphone runs (when lower) | 4 |
 | Opus bitrate (kbit/s, 32-160) | 96 |
 | controller mode at the first power-up | Xbox 360 |
 | status LED GPIO (-1: none) | 3 |
@@ -235,7 +236,7 @@ into the computer, open the console in Chrome or Edge (desktop) and press **Conn
   time, microphone packets and level, CPU per core, each task's CPU share, free memory, the
   controller's input, and the firmware's log.
 - Settings: gamepad mode, headphone gain (-12 to 0 dB before the Opus encoder), Opus complexity,
-  Opus bitrate (32 to 160 kbps), microphone (after a restart), push to talk; restart and reset buttons.
+  Opus complexity while the mic is on, Opus bitrate (32 to 160 kbps), microphone (after a restart), push to talk; restart and reset buttons.
 - Controllers: each player's controller (id, address, status, battery, round trip, input
   lost), **Forget**, the number of players, and **Pair a controller** (above).
 - Rumble: on/off and a strength per motor (0 to 200%; 100% is what the game asks for, more lifts
@@ -286,7 +287,7 @@ build. The page only has the published build when it comes from GitHub Pages, no
 ### From a terminal
 
 The same port works from a terminal (`screen /dev/ttyACM0`): type `hello`, `get`,
-`set gain -3`, `set complexity 5`, `set bitrate 64`, `set mode 1`, `set rumble 0`,
+`set gain -3`, `set complexity 5`, `set mic_complexity 3`, `set bitrate 64`, `set mode 1`, `set rumble 0`,
 `set rumble_left 150`, `rumble 255 255 1000` (a 1 s test, levels 0-255 per motor), `logs on`, `reboot`. The protocol is described
 at the top of `main/console.c` (and the firmware update's at the top of `main/ota.c`).
 
@@ -304,8 +305,9 @@ GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Acti
   on a real Switch console, are untested.
 - The headset microphone is tested on Linux only; Windows is untested. While Assistant is held
   (the mic running) the headphones may crackle a little: their stream has 1 to 3 underruns per
-  10 s instead of about 0, as the P4 is close to its limit encoding and decoding at once. A
-  lower Opus complexity is the idea to try.
+  10 s instead of about 0, as the P4 is close to its limit encoding and decoding at once. The
+  encoder now drops to complexity 4 while the mic runs (about half its CPU time at 8); whether
+  that removes the crackle is still to be tested on the board.
 - Several controllers are tested on a PC build (two fake controllers) and on the board with one
   real controller; players 2 to 4 with real controllers are untested. Pairing over the board's
   Bluetooth is tested on the board with one controller.

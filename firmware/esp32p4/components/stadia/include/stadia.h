@@ -21,6 +21,7 @@ typedef struct {
     bool start_game;          /* send StartGame once READY: the game session carries input and rumble */
     bool audio;               /* open the headset audio route at READY (SetAudioModeRequest mode 2) */
     uint8_t audio_complexity; /* Opus complexity 1..10; 0 = 8 */
+    uint8_t audio_mic_complexity; /* while the mic runs, if lower than audio_complexity; 0 = 4 */
     uint8_t audio_kbps;       /* Opus bitrate in kbit/s, STADIA_AUDIO_KBPS_MIN..MAX; 0 = 96 */
     bool allow_clearcut;      /* false (the live preset): refuse Clearcut with a TLS alert */
     bool mic;                 /* ask for the controller's microphone and decode it (needs audio) */
@@ -124,7 +125,9 @@ typedef struct {
     const char *display_state; /* none, dtls-connected, ..., ready, input */
     bool display_up, game_up;  /* the display link and the game session (DTLS up) */
     bool audio_route;          /* headset frames go to the controller */
-    uint8_t audio_complexity;
+    uint8_t audio_complexity;     /* the setting */
+    uint8_t audio_mic_complexity; /* the setting while the mic runs */
+    uint8_t audio_complexity_now; /* what the encoder uses now; 0 before the first frame */
     uint8_t audio_kbps;
     uint32_t audio_encoded, audio_sent, audio_not_sent, audio_trimmed, audio_underruns, audio_resyncs;
     uint64_t audio_bytes, audio_enc_us; /* Opus bytes out, encoder time */
@@ -149,6 +152,9 @@ void stadia_get_stats(stadia_stats_t *st);
 /* The headset encoder's Opus complexity (1..10), changed at run time: it applies from the next
  * 20 ms frame. */
 void stadia_audio_set_complexity(int complexity);
+/* The complexity while the microphone runs (1..10). It only applies when lower than the normal
+ * one, from the frame where the mic starts until 1 s after it goes quiet. */
+void stadia_audio_set_mic_complexity(int complexity);
 
 /* The headset encoder's Opus bitrate in kbit/s (a target: Opus runs VBR), changed at run time
  * from the next 20 ms frame. Clamped to STADIA_AUDIO_KBPS_MIN..MAX. */

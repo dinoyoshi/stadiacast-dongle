@@ -30,6 +30,7 @@ void pad_mode_filter(usb_pad_state_t *st);
 typedef struct {
     int8_t gain_db;     /* -12..0: the headphones' level before the Opus encoder */
     uint8_t complexity; /* Opus, 1..10 */
+    uint8_t mic_complexity; /* Opus while the mic runs, 1..10 (applies when below complexity) */
     uint8_t kbps;       /* Opus bitrate, kbit/s (STADIA_AUDIO_KBPS_MIN..MAX) */
     bool mic;           /* ask the controller for its microphone (from the next start) */
     bool ptt;           /* push to talk */

@@ -16,6 +16,12 @@
  * The rtc task sends them on a 20 ms grid of its own (audio.py's pacer), PACE_HEADROOM_US behind
  * the first frame, so the encoder's 5-11 ms of jitter does not reach the air. A slot with no
  * frame is skipped (an underrun); more than 10 slots behind restarts the grid.
+ *
+ * While the microphone runs (mic_busy(): push to talk held, or speech coming in), its decoder
+ * takes CPU time from this encoder, so the encoder drops to the mic complexity (4 by default,
+ * when that is below the normal one) and goes back 1 s after the mic goes quiet. Complexity 4
+ * leaves out CELT's pitch pre-filter and the second MDCT on transients: about half the encode
+ * time of 8 for a small loss on tonal music.
  */
 #include "stadia_internal.h"
 
@@ -24,6 +30,7 @@
 
 #include "opus.h"
 #include "audio.h"
+#include "mic.h"
 #include "stadia_port.h"
 
 static const char *TAG = "audio";
@@ -38,6 +45,8 @@ static const char *TAG = "audio";
 #define STATS_MS 10000
 #define SLOT_US 20000
 #define PACE_HEADROOM_US 15000
+#define MIC_COMPLEXITY 4  /* while the mic runs, when the config gives none */
+#define MIC_HOLD_MS 1000  /* back to the normal complexity this long after the mic goes quiet */
 
 typedef struct {
     uint16_t len;
@@ -50,7 +59,10 @@ static struct {
     /* producer side */
     OpusEncoder *enc;
     bool enc_failed;
-    int complexity;
+    int complexity;     /* the setting */
+    int mic_complexity; /* the setting while the mic runs */
+    volatile int applied; /* what the encoder has now */
+    int64_t mic_seen_ms;  /* the mic was last busy */
     int kbps;
     int16_t acc[FRAME_SAMPLES * CHANNELS];
     size_t nacc;
@@ -70,6 +82,7 @@ static struct {
     int64_t next_slot_us; /* the pacer's next send time, 0 = waiting for a first frame */
     /* from power-up, for the console (audio_get_stats) */
     volatile int want_complexity; /* 0: no change asked for */
+    volatile int want_mic_complexity; /* 0: no change asked for */
     volatile int want_kbps;       /* 0: no change asked for */
     uint32_t t_encoded, t_trimmed, t_enc_us_max; /* under port_lock */
     uint64_t t_bytes, t_enc_us;
@@ -79,6 +92,7 @@ static struct {
 void audio_init(const stadia_config_t *cfg)
 {
     A.complexity = cfg->audio_complexity ? cfg->audio_complexity : 8;
+    A.mic_complexity = cfg->audio_mic_complexity ? cfg->audio_mic_complexity : MIC_COMPLEXITY;
     A.kbps = cfg->audio_kbps ? cfg->audio_kbps : BITRATE_KBPS;
     if (!A.q) A.q = port_alloc_bulk(QUEUE_LEN * sizeof(frame_t));
     if (!A.q) {
@@ -109,8 +123,9 @@ static bool encoder_ready(void)
     A.enc = enc;
     opus_encoder_ctl(A.enc, OPUS_SET_BITRATE(A.kbps * 1000));
     opus_encoder_ctl(A.enc, OPUS_SET_COMPLEXITY(A.complexity));
-    SLOGI(TAG, "Opus %s: 48 kHz stereo, 20 ms, %d kbps, complexity %d, %d bytes of state", opus_get_version_string(),
-          A.kbps, A.complexity, opus_encoder_get_size(CHANNELS));
+    A.applied = A.complexity;
+    SLOGI(TAG, "Opus %s: 48 kHz stereo, 20 ms, %d kbps, complexity %d (%d while the mic runs), %d bytes of state",
+          opus_get_version_string(), A.kbps, A.complexity, A.mic_complexity, opus_encoder_get_size(CHANNELS));
     return true;
 }
 
@@ -132,8 +147,21 @@ static void encode_frame(void)
     int want = A.want_complexity;
     if (want && want != A.complexity) {
         A.complexity = want;
-        opus_encoder_ctl(A.enc, OPUS_SET_COMPLEXITY(want));
         SLOGI(TAG, "Opus complexity %d", want);
+    }
+    want = A.want_mic_complexity;
+    if (want && want != A.mic_complexity) {
+        A.mic_complexity = want;
+        SLOGI(TAG, "Opus complexity while the mic runs %d", want);
+    }
+    int64_t now_ms = now / 1000;
+    if (mic_busy()) A.mic_seen_ms = now_ms;
+    bool mic = A.mic_seen_ms && now_ms - A.mic_seen_ms < MIC_HOLD_MS;
+    int cplx = mic && A.mic_complexity < A.complexity ? A.mic_complexity : A.complexity;
+    if (cplx != A.applied) {
+        opus_encoder_ctl(A.enc, OPUS_SET_COMPLEXITY(cplx));
+        SLOGI(TAG, "Opus encoding at complexity %d (the mic %s)", cplx, mic ? "runs" : "is quiet");
+        A.applied = cplx;
     }
     int kbps = A.want_kbps;
     if (kbps && kbps != A.kbps) {
@@ -302,6 +330,14 @@ void stadia_audio_set_complexity(int complexity)
     if (!A.enc) A.complexity = complexity; /* before the first frame: the encoder starts with it */
 }
 
+void stadia_audio_set_mic_complexity(int complexity)
+{
+    if (complexity < 1) complexity = 1;
+    if (complexity > 10) complexity = 10;
+    A.want_mic_complexity = complexity;
+    if (!A.enc) A.mic_complexity = complexity;
+}
+
 void stadia_audio_set_bitrate(int kbps)
 {
     if (kbps < STADIA_AUDIO_KBPS_MIN) kbps = STADIA_AUDIO_KBPS_MIN;
@@ -314,6 +350,8 @@ void audio_get_stats(stadia_stats_t *st)
 {
     st->audio_route = A.route;
     st->audio_complexity = (uint8_t)(A.want_complexity ? A.want_complexity : A.complexity);
+    st->audio_mic_complexity = (uint8_t)(A.want_mic_complexity ? A.want_mic_complexity : A.mic_complexity);
+    st->audio_complexity_now = (uint8_t)(A.enc ? A.applied : 0);
     st->audio_kbps = (uint8_t)(A.want_kbps ? A.want_kbps : A.kbps);
     port_lock();
     st->audio_encoded = A.t_encoded;
