@@ -38,6 +38,9 @@ void *port_alloc_bulk(size_t n);
 void port_random(void *buf, size_t len);
 /* Inflate a zlib (or else raw deflate) stream into dst. Returns the size, 0 on failure. */
 size_t port_inflate(const uint8_t *src, size_t n, uint8_t *dst, size_t cap);
+/* Unpack a gzip stream (RFC 1952) into dst, its working state on the heap (it fits a small task
+ * stack). Returns the size, 0 on failure. */
+size_t port_gunzip(const uint8_t *src, size_t n, uint8_t *dst, size_t cap);
 
 /* The board's own MAC address (the USB gamepad modes that report one use it). */
 void port_mac(uint8_t mac[6]);

@@ -340,6 +340,18 @@ size_t port_inflate(const uint8_t *src, size_t n, uint8_t *dst, size_t cap)
     return 0;
 }
 
+size_t port_gunzip(const uint8_t *src, size_t n, uint8_t *dst, size_t cap)
+{
+    z_stream z = {0};
+    if (inflateInit2(&z, 16 + MAX_WBITS) != Z_OK) return 0; /* 16: gzip only */
+    z.next_in = (Bytef *)src, z.avail_in = (uInt)n;
+    z.next_out = dst, z.avail_out = (uInt)cap;
+    int rc = inflate(&z, Z_FINISH);
+    size_t out = z.total_out;
+    inflateEnd(&z);
+    return rc == Z_STREAM_END ? out : 0;
+}
+
 bool port_spawn_low(port_task_fn fn, void *arg, const char *name, int stack_bytes)
 {
     return port_spawn(fn, arg, name, stack_bytes);

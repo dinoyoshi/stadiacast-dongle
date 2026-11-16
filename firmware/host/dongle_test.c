@@ -13,6 +13,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <zlib.h>
+
+#include "mbedtls/base64.h"
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/pk.h"
 #include "mbedtls/sha256.h"
 
 #include "dongle_board.h"
@@ -548,6 +554,214 @@ static void test_console(void)
     free(img);
 }
 
+/* ---- pairing over a fake Bluetooth LE central ---------------------------------------------- */
+
+/* Two devices answer the scan: a decoy (named Stadia, the stronger signal, but no setup service)
+ * and a controller in setup mode, with the setup service and an RSA key in its crypto window. */
+static const dongle_ble_events_t *s_bev;
+static atomic_bool s_scanning, s_quiet, s_connected, s_notify_on;
+static int s_connect_to; /* 1 decoy, 2 controller */
+static int s_decoy_connects;
+static int s_page;
+static uint8_t s_window[8192];
+static size_t s_window_len;
+static mbedtls_pk_context s_key;
+static mbedtls_entropy_context s_ent;
+static mbedtls_ctr_drbg_context s_drbg;
+static char s_got_ssid[64], s_got_pw[64];
+static const dongle_ble_addr_t DECOY = {0, {1, 2, 3, 4, 5, 6}}, CONTROLLER = {1, {0x2b, 0x1a, 9, 8, 7, 6}};
+enum { H_CONNECT = 0x20, H_STATE = 0x22, H_DATA = 0x24, H_CTRL = 0x26 };
+
+static void *fake_scan(void *arg)
+{
+    while (s_scanning) {
+        if (!s_quiet) {
+            s_bev->adv(&DECOY, -40, 0xFE2C, "Stadia decoy", 12);
+            s_bev->adv(&CONTROLLER, -60, 0xFE2C, NULL, 0);
+            s_bev->adv(&CONTROLLER, -61, 0, "Stadia-1A2B", 11);
+        }
+        port_sleep_ms(100);
+    }
+    return NULL;
+}
+
+static const char *fb_start(const dongle_ble_events_t *ev)
+{
+    s_bev = ev;
+    return NULL;
+}
+static int fb_scan_start(int ms)
+{
+    s_scanning = true;
+    pthread_t t;
+    pthread_create(&t, NULL, fake_scan, NULL);
+    pthread_detach(t);
+    return 0;
+}
+static void fb_scan_stop(void) { s_scanning = false; }
+static int fb_connect(const dongle_ble_addr_t *a, int ms)
+{
+    s_connect_to = !memcmp(a, &DECOY, sizeof(*a)) ? 1 : !memcmp(a, &CONTROLLER, sizeof(*a)) ? 2 : 0;
+    if (s_connect_to == 1) s_decoy_connects++;
+    s_connected = s_connect_to != 0;
+    return s_connected ? 0 : 5;
+}
+static void fb_exchange_mtu(int ms) {}
+static unsigned fb_mtu(void) { return 247; }
+static int fb_find_chrs(const uint8_t (*uuids)[16], int n, uint16_t *handles, int ms)
+{
+    /* the state characteristic 0c7c6160-fab2-11e4-9fbb-0002a5d5c51b, little endian */
+    static const uint8_t state[16] = {0x1b, 0xc5, 0xd5, 0xa5, 0x02, 0x00, 0xbb, 0x9f,
+                                      0xe4, 0x11, 0xb2, 0xfa, 0x60, 0x61, 0x7c, 0x0c};
+    CHECK(n == 4 && !memcmp(uuids[1], state, 16), "the setup service's UUIDs");
+    static const uint16_t h[4] = {H_CONNECT, H_STATE, H_DATA, H_CTRL};
+    for (int i = 0; i < n; i++) handles[i] = s_connect_to == 2 ? h[i] : 0;
+    return 0;
+}
+
+static void *fake_verdict(void *arg)
+{
+    port_sleep_ms(50);
+    uint8_t st = 0x1E;
+    s_bev->notify(H_STATE, &st, 1);
+    port_sleep_ms(50);
+    st = 0x3C;
+    if (s_notify_on) s_bev->notify(H_STATE, &st, 1);
+    return NULL;
+}
+
+static int fb_write(uint16_t h, const void *data, size_t len, int ms)
+{
+    const uint8_t *d = data;
+    if (h == H_CTRL && len == 2) {
+        s_page = d[0] | d[1] << 8;
+    } else if (h == H_STATE + 1 && len == 2) {
+        s_notify_on = d[0] == 1;
+    } else if (h == H_CONNECT) {
+        char text[1024];
+        snprintf(text, sizeof(text), "%.*s", (int)len, (const char *)data);
+        sscanf(text, "{\"ssid\":\"%63[^\"]", s_got_ssid);
+        const char *e = strstr(text, "\"enc_passwd\":\"");
+        CHECK(strstr(text, "\"wpa_auth\":7,\"wpa_cipher\":4,") && e, "the credentials: %s", text);
+        if (!e) return 1;
+        e += 14;
+        uint8_t ct[512], pt[64];
+        size_t ctn = 0, ptn = 0;
+        int rc = mbedtls_base64_decode(ct, sizeof(ct), &ctn, (const uint8_t *)e, strcspn(e, "\""));
+        if (!rc) rc = mbedtls_pk_decrypt(&s_key, ct, ctn, pt, &ptn, sizeof(pt) - 1, mbedtls_ctr_drbg_random, &s_drbg);
+        CHECK(rc == 0, "the password decrypts with the controller's key (-0x%04x)", (unsigned)-rc);
+        pt[rc ? 0 : ptn] = 0;
+        snprintf(s_got_pw, sizeof(s_got_pw), "%s", (const char *)pt);
+        pthread_t t;
+        pthread_create(&t, NULL, fake_verdict, NULL);
+        pthread_detach(t);
+    } else {
+        CHECK(0, "write to an unknown handle 0x%x", h);
+        return 1;
+    }
+    return 0;
+}
+
+static int fb_read_long(uint16_t h, uint8_t *buf, size_t cap, size_t *len, int ms)
+{
+    CHECK(h == H_DATA, "read of the crypto window");
+    size_t off = (size_t)s_page * 512;
+    size_t n = off < s_window_len ? s_window_len - off : 0;
+    if (n > 512) n = 512;
+    if (*len + n <= cap) {
+        memcpy(buf + *len, s_window + off, n);
+        *len += n;
+    }
+    return 0;
+}
+
+static void fb_disconnect(void) { s_connected = false; }
+static void fb_cancel(void)
+{
+    s_scanning = false;
+    s_connected = false;
+}
+
+static const dongle_ble_t s_fake_ble = {fb_start, fb_scan_start, fb_scan_stop, fb_connect, fb_exchange_mtu, fb_mtu,
+                                        fb_find_chrs, fb_write, fb_read_long, fb_disconnect, fb_cancel};
+
+/* The controller's key, and its crypto window: gzip'd JSON with the key under device_info (the
+ * key name in another case, a decoy public_key elsewhere, "/" escaped, some padding so it takes
+ * several pages). */
+static void make_window(void)
+{
+    mbedtls_pk_init(&s_key);
+    mbedtls_entropy_init(&s_ent);
+    mbedtls_ctr_drbg_init(&s_drbg);
+    int rc = mbedtls_ctr_drbg_seed(&s_drbg, mbedtls_entropy_func, &s_ent, (const uint8_t *)"test", 4);
+    if (!rc) rc = mbedtls_pk_setup(&s_key, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
+    if (!rc) rc = mbedtls_rsa_gen_key(mbedtls_pk_rsa(s_key), mbedtls_ctr_drbg_random, &s_drbg, 2048, 65537);
+    uint8_t der[1024];
+    int dn = rc ? -1 : mbedtls_pk_write_pubkey_der(&s_key, der, sizeof(der));
+    CHECK(dn > 0, "test key (%d, %d)", rc, dn);
+    char b64[2048], esc[4096];
+    size_t bn = 0;
+    mbedtls_base64_encode((uint8_t *)b64, sizeof(b64), &bn, der + sizeof(der) - dn, (size_t)dn);
+    size_t en = 0;
+    for (size_t i = 0; i < bn; i++) {
+        if (b64[i] == '/') esc[en++] = '\\';
+        esc[en++] = b64[i];
+    }
+    esc[en] = 0;
+    char pad[1200];
+    for (size_t i = 0; i < sizeof(pad) - 1; i++) pad[i] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"[rand() % 52];
+    pad[sizeof(pad) - 1] = 0;
+    char json[8192];
+    int jn = snprintf(json, sizeof(json),
+                      "{\"version\": 3, \"other\": {\"public_key\": \"bm9wZQ==\"}, \"list\": [1, -2.5e3, true, null, "
+                      "\"\\u00e9\\ud83d\\ude00\"], \"pad\": \"%s\",\n \"Device_Info\": {\"name\": \"Stadia\\/1A2B\", "
+                      "\"public_key\": \"%s\"}}",
+                      pad, esc);
+    z_stream z = {0};
+    deflateInit2(&z, 9, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY);
+    z.next_in = (Bytef *)json, z.avail_in = (uInt)jn;
+    z.next_out = s_window, z.avail_out = sizeof(s_window);
+    deflate(&z, Z_FINISH);
+    s_window_len = z.total_out;
+    deflateEnd(&z);
+    CHECK(s_window_len > 1024 && s_window_len < 12 * 512, "window takes several pages (%zu bytes)", s_window_len);
+}
+
+static void pair_wait(pair_status_t *st, int ms)
+{
+    for (int t = 0; t < ms; t += 50) {
+        pair_get_status(st);
+        if (!st->busy) return;
+        port_sleep_ms(50);
+    }
+}
+
+static void test_pairing(void)
+{
+    make_window();
+    pair_setup(&s_fake_ble, "stadiacast-dongle", "stadiacast");
+    CHECK(pair_init(), "pairing set up");
+    CHECK(pair_start() == NULL, "pairing starts");
+    CHECK(pair_start() != NULL, "only one at a time");
+    pair_status_t st;
+    pair_wait(&st, 20000);
+    CHECK(!strcmp(st.state, "done") && strstr(st.msg, "Stadia-1A2B has the hotspot and joined it"),
+          "paired: %s: %s", st.state, st.msg);
+    CHECK(st.setup_state == 0x3C && !strcmp(st.name, "Stadia-1A2B") && st.rssi == -61, "the controller's status");
+    CHECK(s_decoy_connects == 1, "the decoy tried once (%d)", s_decoy_connects);
+    CHECK(!strcmp(s_got_ssid, "stadiacast-dongle") && !strcmp(s_got_pw, "stadiacast"), "the hotspot reached it ('%s', '%s')",
+          s_got_ssid, s_got_pw);
+    CHECK(!s_connected, "link closed after");
+
+    /* stopped while it scans */
+    s_quiet = true;
+    CHECK(pair_start() == NULL, "pairing starts again");
+    port_sleep_ms(300);
+    pair_stop();
+    pair_wait(&st, 3000);
+    CHECK(!st.busy && !strcmp(st.state, "failed") && !strcmp(st.msg, "cancelled"), "stopped: %s: %s", st.state, st.msg);
+}
+
 int main(void)
 {
     status_led_start();
@@ -557,6 +771,7 @@ int main(void)
     test_players();
     test_modes();
     test_console();
+    test_pairing();
     if (s_fail) fprintf(stderr, "--- console output\n%s\n", s_out);
     printf("dongle logic: %s\n", s_fail ? "FAILED" : "ok");
     return s_fail ? 1 : 0;

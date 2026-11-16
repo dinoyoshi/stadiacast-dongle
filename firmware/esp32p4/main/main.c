@@ -195,6 +195,7 @@ void app_main(void)
     }
 #endif
 #if CONFIG_DONGLE_CONSOLE
+    pair_setup(&esp32p4_ble, CONFIG_DONGLE_SSID, CONFIG_DONGLE_PASSWORD);
     console_set_pairing(&s_pairing);
     console_start(cfg.mic, players);
     board_console_start();
