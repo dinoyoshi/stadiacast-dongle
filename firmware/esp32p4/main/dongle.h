@@ -70,5 +70,6 @@ void ota_run(char *args, void (*send)(const char *fmt, ...));
 /* {"t":"ota","state":"idle",...}: the slots, and whether this firmware is on trial. */
 void ota_send_status(void (*send)(const char *fmt, ...));
 /* A freshly updated image boots on trial: keep it once USB is up (else the bootloader rolls back
- * at the next restart). Call once at start-up. */
-void ota_confirm_when_up(void);
+ * at the next restart). servers_up false (stadia_start failed) rolls back now. Call once at
+ * start-up, after stadia_start. */
+void ota_confirm_when_up(bool servers_up);

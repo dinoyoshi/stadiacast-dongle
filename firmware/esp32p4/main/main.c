@@ -138,7 +138,8 @@ void app_main(void)
         .mic = audio && set.mic,
         .mic_push_to_talk = set.ptt, /* the console's settings, CONFIG_DONGLE_* until it changes them */
     };
-    if (!stadia_start(&cfg)) {
+    bool servers = stadia_start(&cfg);
+    if (!servers) {
         ESP_LOGE(TAG, "a server did not start, see above");
     }
 
@@ -150,7 +151,7 @@ void app_main(void)
 #if CONFIG_DONGLE_CONSOLE
     console_start(cfg.mic);
 #endif
-    ota_confirm_when_up();
+    ota_confirm_when_up(servers);
     status_led_set(LED_WAITING);
     ESP_LOGI(TAG, "ready: wake the controller (about 1 s press of the Stadia button)");
 }
