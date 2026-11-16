@@ -66,7 +66,10 @@ static struct {
     bool audio_sent, audio_answered;
     uint32_t audio_ticket;
     int64_t audio_at;
-} D;
+    /* the battery gauge: kept across sessions (a new one reports again only minutes in) */
+    int battery_pct; /* -1: no reading yet */
+    int64_t battery_at;
+} D = {.battery_pct = -1};
 
 static void send_rpc(int kind, uint32_t ticket, int code, const char *message, const uint8_t *payload, size_t plen);
 
@@ -326,7 +329,12 @@ static void on_rpc(const uint8_t *data, size_t len)
                 uint32_t bits = (uint32_t)v.v;
                 float level;
                 memcpy(&level, &bits, 4);
-                SLOGI(TAG, "battery %d%%", (int)(level * 100 + 0.5f));
+                if (!(level >= 0.0f)) level = 0.0f; /* NaN too */
+                if (level > 1.0f) level = 1.0f;
+                int pct = (int)(level * 100 + 0.5f);
+                if (pct != D.battery_pct) SLOGI(TAG, "battery %d%%", pct);
+                D.battery_at = port_now_ms();
+                D.battery_pct = pct;
             }
         } else if (variant.field == C2D_AUDIO_CONFIG) {
             pbf_t mode;
@@ -532,4 +540,16 @@ void stadia_get_stats(stadia_stats_t *st)
     st->game_up = rtc_link_up(game_link());
     audio_get_stats(st);
     if (g_cfg.mic) mic_get_stats(st);
+    int64_t now = port_now_ms();
+    int pct = D.battery_pct;
+    int64_t at = D.battery_at;
+    st->battery_pct = pct;
+    st->battery_age_s = pct < 0 ? -1 : (int32_t)((now - at) / 1000);
+    const rtc_link_t *links[2] = {&D.link, game_link()};
+    for (int i = 0; i < 2; i++) {
+        st->ping_us[i] = links[i]->dtls_up ? links[i]->ping_us : -1;
+        st->pings_sent += links[i]->pings_sent;
+        st->pings_answered += links[i]->pings_answered;
+    }
+    game_get_stats(st);
 }

@@ -98,6 +98,16 @@ typedef struct {
     int mic_peak;           /* loudest decoded sample, 0..32767 */
     int32_t mic_age_ms;     /* since the last microphone packet, -1 before any */
     bool mic_talking;       /* push to talk: Assistant held (or just let go) */
+    /* The controller's battery (ControllerToDisplay #10): the first reading comes a few
+     * minutes after the link is up, then one per percent it drops. Kept across reconnects. */
+    int battery_pct;        /* 0..100, -1 before any reading since power-up */
+    int32_t battery_age_s;  /* since that reading, -1 before any */
+    /* Link quality. Keepalive checks go out every 2.5 s on each link once DTLS is up; the
+     * round trip is the latest one (-1: none yet on this session). Counters run from power-up. */
+    int32_t ping_us[2];     /* display link, game session */
+    uint32_t pings_sent, pings_answered; /* both links */
+    uint32_t input_series, input_gaps, input_repeats; /* game session input: series received,
+                                                       * sequence numbers skipped, resends */
 } stadia_stats_t;
 void stadia_get_stats(stadia_stats_t *st);
 

@@ -164,11 +164,23 @@ into the computer, open the console in Chrome or Edge (desktop) and press **Conn
 
 - Hosted: `https://dinoyoshi.github.io/stadiacast/` (once GitHub Pages is on, see below), or
   open `console/index.html` from a checkout. Add `?demo` to look around without a dongle.
-- Live: controller session and Wi-Fi signal, headphone frames, bitrate, underruns and encode
+- Live: controller session, its battery and connection quality (below), headphone frames, bitrate, underruns and encode
   time, microphone packets and level, CPU per core, each task's CPU share, free memory, the
   controller's input, and the firmware's log.
 - Settings: gamepad mode, headphone gain (-12 to 0 dB before the Opus encoder), Opus complexity,
   Opus bitrate (32 to 160 kbps), microphone (after a restart), push to talk; restart and reset buttons.
+
+The controller card's **Battery** is the controller's own gauge. Its first reading arrives a few
+minutes after the controller connects and then once per percent it drops, so the page shows
+when the latest one came. The dongle keeps it across reconnects until it restarts.
+**Connection** grades the link Good, Fair or Poor by the worst of three figures:
+
+- Wi-Fi signal: the controller's RSSI at the hotspot (good from -60 dBm, fair from -72 dBm).
+- Round trip: the time the controller takes to answer the dongle's keepalive check, sent every
+  2.5 s on the game link (good up to 20 ms, fair up to 60 ms).
+- Input lost: the controller numbers its input packets, so a skipped number is a packet that
+  never arrived. Shown for the last minute (good under 1%, fair under 5%), with any keepalive
+  checks that went unanswered.
 
 The dongle carries a USB serial port for it in every mode (`/dev/ttyACM*` on Linux, a COM port
 on Windows, no driver needed). The page uses Web Serial, which Firefox and Safari don't have. On
@@ -347,6 +359,11 @@ and prints the tone it hears every 5 s (`microphone 5.0 s, 440 Hz, peak 8310`). 
 `STADIA_MIC_PTT=1` and `--talk 4` for push to talk: the fake controller holds Assistant for 4 s,
 and the host build should decode about 4.3 s of tone and log `push to talk: talking`, then
 `microphone off (DisplayToController #5 false) sent`.
+
+`STADIA_STATS=1` prints the battery and link figures of the web console every second. With
+`--game` the fake controller takes `--battery 0.76` (sends that gauge reading) and
+`--input-gap 3` (skips three input sequence numbers once): the host build should then show
+`battery=76%` and `gaps=3`.
 
 ### If the Wi-Fi doesn't come up
 

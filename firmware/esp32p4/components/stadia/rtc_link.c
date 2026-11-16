@@ -185,6 +185,11 @@ static void send_check(rtc_link_t *L, int i)
     stun_attr(&m, ATTR_ICE_CONTROLLED, L->tiebreaker, 8);
     stun_finish(&m, L->remote.pwd);
     send_to(L, i < 0 ? &L->peer : &L->cand[i], m.buf, m.len);
+    if (i < 0 && L->dtls_up) { /* a keepalive: timed; one still unanswered counts as lost */
+        memcpy(L->ping_txid, txid, sizeof(txid));
+        L->ping_sent_us = port_now_us();
+        L->pings_sent++;
+    }
 }
 
 static void select_pair(rtc_link_t *L, const struct sockaddr_in *from, const char *how)
@@ -262,6 +267,12 @@ static void handle_stun(rtc_link_t *L, const uint8_t *d, size_t len, const struc
             SLOGI(TAG, "%s: ICE check to %s answered", L->name, addr_str(from, a, sizeof(a)));
         }
         L->verified_out = true;
+        if (L->ping_sent_us && memcmp(d + 8, L->ping_txid, 12) == 0) {
+            int64_t rtt = port_now_us() - L->ping_sent_us;
+            L->ping_us = rtt > INT32_MAX ? INT32_MAX : (int32_t)rtt;
+            L->ping_sent_us = 0;
+            L->pings_answered++;
+        }
         select_pair(L, from, "binding response");
     } else if (type == BINDING_ERROR) {
         SLOGW(TAG, "%s: STUN error response", L->name);
@@ -334,6 +345,9 @@ static void dtls_reset(rtc_link_t *L)
     srtp_rx_free(&L->srtp_in);
     L->in_ssrc = 0;
     L->media_in = L->rtcp_in = L->srtp_fail = 0;
+    if (L->ping_sent_us) L->pings_sent--; /* still in flight: neither answered nor lost */
+    L->ping_sent_us = 0;
+    L->ping_us = -1;
     L->timer_fin = 0;
     if (was_up && L->ops->on_closed) L->ops->on_closed(L);
 }
@@ -739,6 +753,7 @@ bool rtc_link_init(rtc_link_t *L, const char *name, uint16_t port, const rtc_lin
     L->name = name;
     L->ops = ops;
     L->port = port;
+    L->ping_us = -1;
     port_random(L->tiebreaker, sizeof(L->tiebreaker));
     port_random(&L->ssrc, sizeof(L->ssrc));
     L->sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);

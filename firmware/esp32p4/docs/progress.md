@@ -47,6 +47,7 @@ All merged into `main`.
 | #15 | Web console | CDC ACM serial port next to the gamepad in every mode; JSON lines with stats once a second; settings for mode, headphone gain, Opus complexity, mic, push to talk; static page in `console/`, deployed to GitHub Pages |
 | #16 | TLS and audio buffers in PSRAM, faster flash | `MBEDTLS_EXTERNAL_MEM_ALLOC` (boots and reaches ready on the board); audio rings and queues (about 55 KB) in PSRAM via `port_alloc_bulk()`, Opus state and audio stacks stay internal; flash at QIO 80 MHz instead of DIO 40 MHz (80 MHz needs minimum chip rev v1.0; boots on the board), aimed at the headphone underruns while the mic runs. Board-tested 2026-11-16: boots, and the mic works with Assistant held. Running code from PSRAM (`SPIRAM_XIP_FROM_PSRAM`) was tried and dropped: it boot-loops a v1.3 P4 |
 | #17 | Adjustable Opus bitrate | headphone stream bitrate 32-160 kbps (default 96, menuconfig `DONGLE_OPUS_BITRATE`), set from the web console or `set bitrate N`, saved in NVS, applied from the next 20 ms frame. Host-tested (48 kbps gives 121 B frames); board test pending |
+| #19 | Battery and connection quality in the web console | battery gauge (`ControllerToDisplay` #10) with its age; keepalive STUN round trip per link; input series sequence gaps and unanswered keepalives over the last minute; Good/Fair/Poor verdict. Host-tested with the fake controller (`--battery`, `--input-gap`); board test pending |
 
 ## Things we learned the hard way
 
