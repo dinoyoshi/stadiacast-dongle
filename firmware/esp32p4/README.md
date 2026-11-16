@@ -324,11 +324,13 @@ tied to this one ([firmware/README.md](../README.md) has the whole layout):
 |---|---|
 | `../core/stadia/` | the receiver: HTTPS, GMsg signalling, ICE/DTLS-SRTP, display and game sessions, Opus audio, microphone; plain C, also builds for Linux |
 | `../core/gamepad/` | the USB gamepad modes: Xbox 360, DualShock 4, Switch Pro and HID descriptors and reports, one `mode_<name>.c` each; plain C |
+| `../core/dongle/` | the dongle's logic: input mapping, mode combos and the BOOT button, rumble settings and test, players, LED patterns; plain C |
 | `../core/opus/` | libopus 1.5.2 (git submodule), fixed point |
 | `../platform/port_api/` | `stadia_port.h`: the OS services the core needs (tasks, time, memory, locks, log) |
 | `../platform/port_esp_idf/` | `stadia_port.h` on ESP-IDF, for any ESP32 board |
 | `../host/` | the Linux build of the core, tested against the fake controller (also in CI) |
-| `main/` | this board's start-up, the hotspot and DNS sink (`hotspot.c`), C6 update, mode switching, status LED, console, OTA, pairing |
+| `main/` | this board's start-up, the hotspot and DNS sink (`hotspot.c`), C6 update, console, OTA, pairing |
+| `components/dongle_board/` | `dongle_board.h` for this board: NVS, the LED on GPIO3, the BOOT button on GPIO35, the USB device's mode |
 | `components/usb_pad/` | this board's USB device (TinyUSB on the P4's DWC2 high-speed port): the gamepads, the UAC2 headset, the console's serial port |
 | `c6_fw/` | where the C6's `network_adapter.bin` goes for an update (not committed) |
 
@@ -450,6 +452,7 @@ From the repository root:
 cmake -S firmware/host -B build-host -DMBEDTLS_DIR=$IDF_PATH/components/mbedtls/mbedtls
 cmake --build build-host
 build-host/gamepad_test                  # the gamepad modes' reports are unchanged
+build-host/dongle_test                   # the dongle's logic on a fake board
 firmware/host/run_loopback.sh build-host # the whole session against the fake controller
 ```
 

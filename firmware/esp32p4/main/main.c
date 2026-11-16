@@ -35,30 +35,20 @@
 
 static const char *TAG = "dongle";
 
-/* XInput wButtons (usb_pad_state_t.buttons in every mode) share bits 0-9 and 12-15 with the
- * controller's layout; the Stadia button is the guide button, Assistant and Capture go in extra. */
-#define XINPUT_SHARED_BITS 0xF3FF
-
 /* Which players' controllers are connected, for the LED: steady while any is. */
 static volatile uint32_t s_connected;
 
 static void on_pad(int player, const stadia_pad_t *pad, void *arg)
 {
-    usb_pad_state_t st = {0}; /* a disconnect releases everything */
+    usb_pad_state_t st;
+    dongle_pad_state(pad, &st); /* core/dongle/input.c */
     if (pad->connected) {
         s_connected |= 1u << player;
     } else {
         s_connected &= ~(1u << player);
     }
     status_led_set(s_connected ? LED_CONNECTED : LED_WAITING);
-    if (pad->connected) {
-        st.buttons = (pad->buttons & XINPUT_SHARED_BITS) | ((pad->buttons & STADIA_BTN_STADIA) ? USB_PAD_GUIDE : 0);
-        st.extra = (pad->buttons & STADIA_BTN_CAPTURE ? USB_PAD_CAPTURE : 0) |
-                   (pad->buttons & STADIA_BTN_ASSISTANT ? USB_PAD_ASSISTANT : 0);
-        st.lt = pad->lt, st.rt = pad->rt;
-        st.lx = pad->lx, st.ly = pad->ly, st.rx = pad->rx, st.ry = pad->ry;
-        if (player == 0) pad_mode_filter(&st); /* the mode combos are player 1's */
-    }
+    if (pad->connected && player == 0) pad_mode_filter(&st); /* the mode combos are player 1's */
     usb_pad_send(player, &st);
     console_pad(player, &st);
 }
@@ -121,7 +111,7 @@ void app_main(void)
 #if CONFIG_DONGLE_CONSOLE
     usb_pad_enable_console();
 #endif
-    if (usb_pad_start(pad_mode_load(), players, on_rumble, NULL, audio) != ESP_OK) {
+    if (usb_pad_start(pad_mode_load(CONFIG_DONGLE_PAD_MODE), players, on_rumble, NULL, audio) != ESP_OK) {
         ESP_LOGE(TAG, "no USB gamepad, see above");
     }
     stadia_set_pad_callback(on_pad, NULL);

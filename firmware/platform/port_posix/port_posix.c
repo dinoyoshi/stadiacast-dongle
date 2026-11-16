@@ -152,6 +152,107 @@ bool port_event_wait(port_event_t *ev, int timeout_ms)
     return got;
 }
 
+struct port_mutex {
+    pthread_mutex_t mu;
+};
+
+port_mutex_t *port_mutex_new(void)
+{
+    port_mutex_t *m = calloc(1, sizeof(*m));
+    if (m) pthread_mutex_init(&m->mu, NULL);
+    return m;
+}
+
+void port_mutex_lock(port_mutex_t *m)
+{
+    pthread_mutex_lock(&m->mu);
+}
+
+void port_mutex_unlock(port_mutex_t *m)
+{
+    pthread_mutex_unlock(&m->mu);
+}
+
+/* One thread per timer, waiting on a condition variable for the next expiry or a change. */
+struct port_timer {
+    pthread_mutex_t mu;
+    pthread_cond_t cv;
+    port_task_fn fn;
+    void *arg;
+    int64_t due_us, period_us; /* due 0: stopped */
+};
+
+static void *timer_thread(void *p)
+{
+    port_timer_t *t = p;
+    pthread_mutex_lock(&t->mu);
+    for (;;) {
+        if (!t->due_us) {
+            pthread_cond_wait(&t->cv, &t->mu);
+            continue;
+        }
+        int64_t now = port_now_us();
+        if (now < t->due_us) {
+            struct timespec until;
+            clock_gettime(CLOCK_REALTIME, &until);
+            int64_t ns = until.tv_nsec + (t->due_us - now) * 1000;
+            until.tv_sec += ns / 1000000000L;
+            until.tv_nsec = ns % 1000000000L;
+            pthread_cond_timedwait(&t->cv, &t->mu, &until);
+            continue;
+        }
+        t->due_us = t->period_us ? t->due_us + t->period_us : 0;
+        pthread_mutex_unlock(&t->mu);
+        t->fn(t->arg);
+        pthread_mutex_lock(&t->mu);
+    }
+    return NULL;
+}
+
+port_timer_t *port_timer_new(port_task_fn fn, void *arg, const char *name)
+{
+    port_timer_t *t = calloc(1, sizeof(*t));
+    if (!t) return NULL;
+    pthread_mutex_init(&t->mu, NULL);
+    pthread_cond_init(&t->cv, NULL);
+    t->fn = fn, t->arg = arg;
+    pthread_t th;
+    if (pthread_create(&th, NULL, timer_thread, t) != 0) {
+        free(t);
+        return NULL;
+    }
+    pthread_detach(th);
+    return t;
+}
+
+static bool timer_set(port_timer_t *t, int64_t us, int64_t period)
+{
+    pthread_mutex_lock(&t->mu);
+    t->due_us = port_now_us() + (us > 0 ? us : 1);
+    t->period_us = period;
+    pthread_cond_signal(&t->cv);
+    pthread_mutex_unlock(&t->mu);
+    return true;
+}
+
+bool port_timer_start_once(port_timer_t *t, int64_t us)
+{
+    return timer_set(t, us, 0);
+}
+
+bool port_timer_start_periodic(port_timer_t *t, int64_t us)
+{
+    return timer_set(t, us, us);
+}
+
+void port_timer_stop(port_timer_t *t)
+{
+    pthread_mutex_lock(&t->mu);
+    t->due_us = 0;
+    pthread_cond_signal(&t->cv);
+    pthread_mutex_unlock(&t->mu);
+}
+
 void port_log(char level, const char *tag, const char *fmt, ...)
 {
     char line[512];

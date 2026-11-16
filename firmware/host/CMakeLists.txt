@@ -3,6 +3,7 @@
 #   cmake --build build-host
 #   firmware/host/run_loopback.sh build-host   # against tests/fake_controller.py
 #   build-host/gamepad_test                    # the gamepad modes' reports
+#   build-host/dongle_test                     # core/dongle on a fake board
 cmake_minimum_required(VERSION 3.16)
 project(stadia_host C)
 
@@ -26,9 +27,16 @@ add_subdirectory(${FW}/platform/port_api port_api)
 add_subdirectory(${FW}/platform/port_posix port_posix)
 add_subdirectory(${FW}/core/stadia stadia)
 add_subdirectory(${FW}/core/gamepad gamepad)
+add_subdirectory(${FW}/core/dongle dongle)
 
 add_executable(stadia_host main_host.c)
 target_link_libraries(stadia_host PRIVATE stadia port_posix)
 
 add_executable(gamepad_test gamepad_test.c)
 target_link_libraries(gamepad_test PRIVATE gamepad port_posix)
+
+# core/dongle on a fake board (its own stadia_rumble and stadia_get_stats: no servers)
+add_executable(dongle_test dongle_test.c)
+target_include_directories(dongle_test PRIVATE $<TARGET_PROPERTY:dongle,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(dongle_test PRIVATE $<TARGET_FILE:dongle> gamepad port_posix)
+add_dependencies(dongle_test dongle)

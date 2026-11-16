@@ -50,6 +50,20 @@ port_event_t *port_event_new(void);
 void port_event_set(port_event_t *ev);
 bool port_event_wait(port_event_t *ev, int timeout_ms);
 
+/* A lock of its own (not recursive), for state outside the controller session. */
+typedef struct port_mutex port_mutex_t;
+port_mutex_t *port_mutex_new(void);
+void port_mutex_lock(port_mutex_t *m);
+void port_mutex_unlock(port_mutex_t *m);
+
+/* A timer whose callback runs in a timer task (keep it short, don't block). One-shot or
+ * periodic; start replaces a running one, stop is safe on a stopped one. */
+typedef struct port_timer port_timer_t;
+port_timer_t *port_timer_new(port_task_fn fn, void *arg, const char *name); /* NULL: none left */
+bool port_timer_start_once(port_timer_t *t, int64_t us);
+bool port_timer_start_periodic(port_timer_t *t, int64_t us);
+void port_timer_stop(port_timer_t *t);
+
 /* Logging, one line per call. */
 void port_log(char level, const char *tag, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 #define SLOGI(tag, ...) port_log('I', tag, __VA_ARGS__)
