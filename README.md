@@ -35,7 +35,7 @@ computer see lives in a portable core, and each board only adds its own Wi-Fi, U
 
 | Board | Status | Wi-Fi and Bluetooth | USB to the computer | Guide |
 |---|---|---|---|---|
-| DFRobot FireBeetle 2 ESP32-P4 (DFR1172) | Supported, tested daily | On-board ESP32-C6 over SDIO (ESP-Hosted) | ESP32-P4 high-speed OTG port (TinyUSB) | [firmware/esp32p4](firmware/esp32p4/README.md) |
+| DFRobot FireBeetle 2 ESP32-P4 (DFR1172) | Supported | On-board ESP32-C6 over SDIO (ESP-Hosted) | ESP32-P4 high-speed OTG port (TinyUSB) | [firmware/esp32p4](firmware/esp32p4/README.md) |
 | Linux PC (host build) | For testing only: runs the core against a fake controller, no USB gamepad | The PC's network | none | [firmware/README.md](firmware/README.md#building-and-testing-the-core-on-a-pc) |
 | Your board | Welcome! | A Wi-Fi access point the controller can join | A USB device port | [Adding a board](firmware/README.md#adding-a-board) |
 
