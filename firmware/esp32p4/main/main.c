@@ -52,10 +52,11 @@ static void on_pad(const stadia_pad_t *pad, void *arg)
     console_pad(&st);
 }
 
-/* The game's rumble (0..255 per motor) to the controller's motors (0..65535). */
+/* The game's rumble (0..255 per motor) to the controller's motors, through the console's
+ * rumble settings (rumble.c). */
 static void on_rumble(uint8_t large, uint8_t small, void *arg)
 {
-    stadia_rumble((uint16_t)(large * 257), (uint16_t)(small * 257));
+    rumble_host(large, small);
 }
 
 #if CONFIG_DONGLE_USB_AUDIO
@@ -102,6 +103,7 @@ void app_main(void)
     bool audio = false;
 #endif
     dongle_settings_t set;
+    rumble_init();
     settings_load(&set);
 #if CONFIG_DONGLE_CONSOLE
     usb_pad_enable_console();
