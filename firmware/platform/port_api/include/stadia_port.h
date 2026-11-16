@@ -18,6 +18,8 @@ bool port_spawn(port_task_fn fn, void *arg, const char *name, int stack_bytes);
 /* The same at a lower priority than the network task (FreeRTOS 4 instead of 5; the host ignores it):
  * work that can wait behind the links and the headphones' encoder. */
 bool port_spawn_low(port_task_fn fn, void *arg, const char *name, int stack_bytes);
+/* The same at a given priority, 1 (lowest: background work) to 5 (the network task). */
+bool port_spawn_prio(port_task_fn fn, void *arg, const char *name, int stack_bytes, int prio);
 
 /* Milliseconds since boot, monotonic. */
 int64_t port_now_ms(void);
@@ -63,6 +65,15 @@ port_timer_t *port_timer_new(port_task_fn fn, void *arg, const char *name); /* N
 bool port_timer_start_once(port_timer_t *t, int64_t us);
 bool port_timer_start_periodic(port_timer_t *t, int64_t us);
 void port_timer_stop(port_timer_t *t);
+
+/* A byte queue from one producer to one consumer: send never blocks (false: it did not all fit,
+ * nothing was queued), receive waits up to timeout_ms for at least one byte. bulk: the buffer
+ * may be in slower memory (PSRAM on the board). */
+typedef struct port_stream port_stream_t;
+port_stream_t *port_stream_new(size_t size, bool bulk);
+bool port_stream_send(port_stream_t *s, const void *data, size_t n);
+size_t port_stream_receive(port_stream_t *s, void *buf, size_t max, int timeout_ms);
+void port_stream_reset(port_stream_t *s);
 
 /* Logging, one line per call. */
 void port_log(char level, const char *tag, const char *fmt, ...) __attribute__((format(printf, 3, 4)));

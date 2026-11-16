@@ -57,3 +57,73 @@ const char *rumble_test(uint8_t left, uint8_t right, int ms);
 /* What the motors get (0..65535), what the host asks for, and whether a test runs; true when
  * the motors' levels changed since the last call. */
 bool rumble_levels(uint16_t out[2], uint8_t host[2], bool *testing);
+
+/* ---- settings (settings.c), kept in the board's store ("console") ------------------------ */
+
+typedef struct {
+    int8_t gain_db;     /* -12..0: the headphones' level before the Opus encoder */
+    uint8_t complexity; /* Opus, 1..10 */
+    uint8_t mic_complexity; /* Opus while the mic runs, 1..10 (applies when below complexity) */
+    uint8_t kbps;       /* Opus bitrate, kbit/s (STADIA_AUDIO_KBPS_MIN..MAX) */
+    bool mic;           /* ask the controller for its microphone (from the next start) */
+    bool ptt;           /* push to talk */
+    bool mic_running;   /* what this start does (mic as it was at power-up) */
+    bool rumble;        /* rumble on/off */
+    uint8_t rumble_pct[2]; /* strength per motor (left, right), 0..RUMBLE_PCT_MAX % */
+} dongle_settings_t;
+
+/* What this build offers, and the settings before anyone changes them. */
+typedef struct {
+    bool audio;         /* the USB headset is built in */
+    bool mic_available; /* the controller's microphone can be passed on */
+    dongle_settings_t defaults;
+    const char *repo_path; /* where the web console lives, for the log: "firmware/esp32p4/console" */
+} dongle_build_t;
+
+/* The saved settings (the defaults where none are saved). Before the USB device and
+ * stadia_start: it also applies the gain and the rumble settings. */
+void settings_load(const dongle_build_t *build, dongle_settings_t *out);
+/* The headphones' gain as Q15 (32768 = 0 dB), for the audio task. */
+int32_t console_gain_q15(void);
+
+/* ---- the console (console.c): JSON lines over the board's console link ------------------- */
+
+/* Pairing a controller over the board's Bluetooth (on the P4: esp32p4/main/pair.c), which the
+ * console starts and polls. A board without it passes none. */
+typedef struct {
+    const char *state; /* idle, starting, scanning, connecting, reading, sending, waiting, done, failed */
+    char msg[160];     /* what is going on, or why it failed, for a person */
+    char name[32];     /* the controller found, "" before one */
+    int rssi;
+    int setup_state;   /* the controller's last setup state byte, -1 none */
+    bool busy;
+    uint32_t gen;      /* changes whenever anything above does */
+} pair_status_t;
+typedef struct {
+    bool (*init)(void);
+    const char *(*start)(void); /* NULL when started, else why not */
+    void (*stop)(void);
+    void (*get_status)(pair_status_t *out);
+} dongle_pair_t;
+/* Before console_start; NULL (the default): no pairing on this board. */
+void console_set_pairing(const dongle_pair_t *pair);
+
+/* The console task, after stadia_start. */
+void console_start(bool mic_running, int players);
+/* The input a player's gamepad gets, for the console's live view. Any task. */
+void console_pad(int player, const usb_pad_state_t *st);
+/* Whether the host asked for the log ("logs on"): the board's log hook then copies each line
+ * to the console link (not starting with '{'). */
+bool console_logs_on(void);
+
+/* ---- firmware updates over the console (ota.c) ------------------------------------------ */
+
+/* The console's "ota" command: a whole update, after which the board restarts (it returns only
+ * when the update failed). send is the console's line printf. */
+void ota_run(char *args, void (*send)(const char *fmt, ...));
+/* {"t":"ota","state":"idle",...}: the slots, and whether this firmware is on trial. */
+void ota_send_status(void (*send)(const char *fmt, ...));
+/* A freshly updated image boots on trial: keep it once USB is up (else the board goes back at
+ * the next restart). servers_up false (stadia_start failed) goes back now. Once at start-up,
+ * after stadia_start. */
+void ota_confirm_when_up(bool servers_up);

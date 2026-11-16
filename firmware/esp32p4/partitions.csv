@@ -3,7 +3,7 @@
 # survive the switch to this table.
 nvs,      data, nvs,     0x9000,   24K,
 phy_init, data, phy,     0xf000,   4K,
-# Two app slots for updates from the web console (main/ota.c): otadata says which one boots.
+# Two app slots for updates from the web console (core/dongle/ota.c): otadata says which one boots.
 otadata,  data, ota,     0x10000,  8K,
 ota_0,    app,  ota_0,   0x20000,  0x2F0000,
 # The C6's ESP-Hosted firmware (c6_fw/network_adapter.bin), which main/c6_update.c installs on

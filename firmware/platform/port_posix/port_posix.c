@@ -253,6 +253,64 @@ void port_timer_stop(port_timer_t *t)
     pthread_mutex_unlock(&t->mu);
 }
 
+struct port_stream {
+    pthread_mutex_t mu;
+    pthread_cond_t cv;
+    uint8_t *buf;
+    size_t size, head, len;
+};
+
+port_stream_t *port_stream_new(size_t size, bool bulk)
+{
+    port_stream_t *s = calloc(1, sizeof(*s));
+    if (!s || !(s->buf = malloc(size))) {
+        free(s);
+        return NULL;
+    }
+    pthread_mutex_init(&s->mu, NULL);
+    pthread_cond_init(&s->cv, NULL);
+    s->size = size;
+    return s;
+}
+
+bool port_stream_send(port_stream_t *s, const void *data, size_t n)
+{
+    pthread_mutex_lock(&s->mu);
+    bool fits = s->size - s->len >= n;
+    for (size_t i = 0; fits && i < n; i++) s->buf[(s->head + s->len + i) % s->size] = ((const uint8_t *)data)[i];
+    if (fits) {
+        s->len += n;
+        pthread_cond_signal(&s->cv);
+    }
+    pthread_mutex_unlock(&s->mu);
+    return fits;
+}
+
+size_t port_stream_receive(port_stream_t *s, void *buf, size_t max, int timeout_ms)
+{
+    struct timespec until;
+    clock_gettime(CLOCK_REALTIME, &until);
+    int64_t ns = until.tv_nsec + (int64_t)timeout_ms * 1000000;
+    until.tv_sec += ns / 1000000000L;
+    until.tv_nsec = ns % 1000000000L;
+    pthread_mutex_lock(&s->mu);
+    while (!s->len && pthread_cond_timedwait(&s->cv, &s->mu, &until) == 0) {
+    }
+    size_t n = s->len < max ? s->len : max;
+    for (size_t i = 0; i < n; i++) ((uint8_t *)buf)[i] = s->buf[(s->head + i) % s->size];
+    s->head = (s->head + n) % s->size;
+    s->len -= n;
+    pthread_mutex_unlock(&s->mu);
+    return n;
+}
+
+void port_stream_reset(port_stream_t *s)
+{
+    pthread_mutex_lock(&s->mu);
+    s->head = s->len = 0;
+    pthread_mutex_unlock(&s->mu);
+}
+
 void port_log(char level, const char *tag, const char *fmt, ...)
 {
     char line[512];
@@ -283,6 +341,11 @@ size_t port_inflate(const uint8_t *src, size_t n, uint8_t *dst, size_t cap)
 }
 
 bool port_spawn_low(port_task_fn fn, void *arg, const char *name, int stack_bytes)
+{
+    return port_spawn(fn, arg, name, stack_bytes);
+}
+
+bool port_spawn_prio(port_task_fn fn, void *arg, const char *name, int stack_bytes, int prio)
 {
     return port_spawn(fn, arg, name, stack_bytes);
 }

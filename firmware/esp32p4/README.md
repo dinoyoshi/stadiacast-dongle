@@ -289,7 +289,7 @@ build. The page only has the published build when it comes from GitHub Pages, no
 The same port works from a terminal (`screen /dev/ttyACM0`): type `hello`, `get`,
 `set gain -3`, `set complexity 5`, `set mic_complexity 3`, `set bitrate 64`, `set mode 1`, `set rumble 0`,
 `set rumble_left 150`, `rumble 255 255 1000` (a 1 s test, levels 0-255 per motor), `logs on`, `reboot`. The protocol is described
-at the top of `main/console.c` (and the firmware update's at the top of `main/ota.c`).
+at the top of `../core/dongle/console.c` (and the firmware update's at the top of `../core/dongle/ota.c`).
 
 GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Actions". The
 `Web console and firmware (GitHub Pages)` workflow then builds the firmware and publishes it with
@@ -324,13 +324,13 @@ tied to this one ([firmware/README.md](../README.md) has the whole layout):
 |---|---|
 | `../core/stadia/` | the receiver: HTTPS, GMsg signalling, ICE/DTLS-SRTP, display and game sessions, Opus audio, microphone; plain C, also builds for Linux |
 | `../core/gamepad/` | the USB gamepad modes: Xbox 360, DualShock 4, Switch Pro and HID descriptors and reports, one `mode_<name>.c` each; plain C |
-| `../core/dongle/` | the dongle's logic: input mapping, mode combos and the BOOT button, rumble settings and test, players, LED patterns; plain C |
+| `../core/dongle/` | the dongle's logic: input mapping, mode combos and the BOOT button, rumble settings and test, players, LED patterns, the web console's protocol (`console.c`) and firmware updates over it (`ota.c`); plain C |
 | `../core/opus/` | libopus 1.5.2 (git submodule), fixed point |
 | `../platform/port_api/` | `stadia_port.h`: the OS services the core needs (tasks, time, memory, locks, log) |
 | `../platform/port_esp_idf/` | `stadia_port.h` on ESP-IDF, for any ESP32 board |
 | `../host/` | the Linux build of the core, tested against the fake controller (also in CI) |
-| `main/` | this board's start-up, the hotspot and DNS sink (`hotspot.c`), C6 update, console, OTA, pairing |
-| `components/dongle_board/` | `dongle_board.h` for this board: NVS, the LED on GPIO3, the BOOT button on GPIO35, the USB device's mode |
+| `main/` | this board's start-up, the hotspot and DNS sink (`hotspot.c`), C6 update, pairing (NimBLE) |
+| `components/dongle_board/` | `dongle_board.h` for this board: NVS, the LED on GPIO3, the BOOT button on GPIO35, the USB device's mode and audio counters, the console's USB serial link, chip info, CPU and heap stats, the task list, the two app slots (`esp_ota`) |
 | `components/usb_pad/` | this board's USB device (TinyUSB on the P4's DWC2 high-speed port): the gamepads, the UAC2 headset, the console's serial port |
 | `c6_fw/` | where the C6's `network_adapter.bin` goes for an update (not committed) |
 

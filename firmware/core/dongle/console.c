@@ -1,7 +1,8 @@
 /*
- * The console: live stats and settings over the USB serial port that sits next to the gamepad
- * (usb_console.c), for the web console in firmware/esp32p4/console/ (Chrome or Edge, Web Serial)
- * or a terminal.
+ * The console: live stats and settings over the board's console link (on the ESP32-P4 a USB
+ * serial port next to the gamepad), for the web console in firmware/esp32p4/console/ (Chrome or
+ * Edge, Web Serial) or a terminal. The same on every board: what only the board knows (its chip,
+ * CPU load, tasks, memory, the hotspot's signal) comes from dongle_board.h.
  *
  * To the host, one line each, only while the host has the port open:
  *   {"t":"info",...}      firmware, chip, hotspot; after "hello"
@@ -30,12 +31,15 @@
  *   players 1-4 (controllers at once, after a restart)
  * The stats carry "players": each player's controller (its id, address, link state, battery).
  *
- * The settings live in NVS ("console"), the mode where pad_mode.c keeps it. All of this costs the
- * board nothing while no one has the port open but a 100 ms wake-up of a low-priority task.
+ * The settings live in the board's store ("console", settings_load below), the mode where
+ * pad_mode.c keeps it. All of this costs the board nothing while no one has the port open but a
+ * 50 ms wake-up of a low-priority task.
  */
-#include "dongle.h"
+#include "dongle_board.h"
+#include "dongle_core.h"
+#include "pad_modes.h"
 #include "stadia.h"
-#include "usb_pad.h"
+#include "stadia_port.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -43,92 +47,36 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "esp_app_desc.h"
-#include "esp_chip_info.h"
-#include "esp_heap_caps.h"
-#include "esp_log.h"
-#include "esp_mac.h"
-#include "esp_system.h"
-#include "esp_timer.h"
-#include "esp_wifi.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/task.h"
-#include "nvs.h"
-#include "sdkconfig.h"
-
 static const char *TAG = "console";
 
 #define OUT_MAX 3072
-#define LOG_LINE 240
-#define MAX_TASKS 40
 #define PAD_MIN_US (50 * 1000)
 
-/* CPU figures need FreeRTOS's run time stats (CONFIG_DONGLE_CONSOLE selects them) */
-#define CONSOLE_CPU (configUSE_TRACE_FACILITY && configGENERATE_RUN_TIME_STATS)
-
-#ifndef CONFIG_DONGLE_OPUS_COMPLEXITY
-#define CONFIG_DONGLE_OPUS_COMPLEXITY 8
-#endif
-#ifndef CONFIG_DONGLE_OPUS_MIC_COMPLEXITY
-#define CONFIG_DONGLE_OPUS_MIC_COMPLEXITY 4
-#endif
-#ifndef CONFIG_DONGLE_OPUS_BITRATE
-#define CONFIG_DONGLE_OPUS_BITRATE 96
-#endif
-
 static struct {
+    const dongle_build_t *build;
+    const dongle_pair_t *pair;
     dongle_settings_t set;
     volatile int32_t gain_q15;
     bool started;
     char *out; /* OUT_MAX: the task's line buffer */
-    /* the log tee */
-    vprintf_like_t prev_vprintf;
     volatile bool logs;
-    SemaphoreHandle_t log_lock;
-    char *log_buf;
     /* the pads, from the link task */
-    portMUX_TYPE pad_mux;
+    port_mutex_t *pad_lock;
     usb_pad_state_t pad[STADIA_MAX_CONTROLLERS];
     volatile uint32_t pad_new; /* one bit per player */
     int64_t pad_sent_us[STADIA_MAX_CONTROLLERS];
     int players, players_running; /* saved (next start), this start */
-    /* CPU: the run time counters at the last snapshot */
-    TaskStatus_t *tasks;
-    struct prev_run {
-        UBaseType_t num;
-        configRUN_TIME_COUNTER_TYPE run;
-    } *prev; /* MAX_TASKS */
-    int nprev;
-    int64_t prev_us;       /* the last per-core figures */
-    int64_t tasks_prev_us; /* the last task list */
+    board_stats_t bs;  /* the board's figures, once a second */
+    bool tasks_have_prev; /* a task list was taken since the port opened: the next one measures from it */
     volatile bool tasks_req;
     int tasks_again; /* stats ticks until a list asked for with "tasks" */
-    configRUN_TIME_COUNTER_TYPE idle_prev[2];
-    int cpu[2]; /* % busy, -1 unknown */
-    int64_t wifi_at;
-    int rssi, stations;
-    bool rssi_ok;
-} K = {.pad_mux = portMUX_INITIALIZER_UNLOCKED, .cpu = {-1, -1}};
+} K;
 
 /* ---- settings ---------------------------------------------------------------------- */
 
 static void defaults(dongle_settings_t *s)
 {
-    *s = (dongle_settings_t){
-        .gain_db = 0,
-        .complexity = CONFIG_DONGLE_OPUS_COMPLEXITY,
-        .mic_complexity = CONFIG_DONGLE_OPUS_MIC_COMPLEXITY,
-        .kbps = CONFIG_DONGLE_OPUS_BITRATE,
-#if CONFIG_DONGLE_USB_MIC
-        .mic = true,
-#endif
-#if CONFIG_DONGLE_MIC_PUSH_TO_TALK
-        .ptt = true,
-#endif
-        .rumble = true,
-        .rumble_pct = {100, 100},
-    };
+    *s = K.build->defaults;
 }
 
 static void apply_rumble(void)
@@ -141,29 +89,24 @@ static void apply_gain(int gain_db)
     K.gain_q15 = (int32_t)lroundf(32768.0f * powf(10.0f, gain_db / 20.0f));
 }
 
-void settings_load(dongle_settings_t *out)
+void settings_load(const dongle_build_t *build, dongle_settings_t *out)
 {
+    K.build = build;
     dongle_settings_t s;
     defaults(&s);
-    nvs_handle_t h;
-    if (nvs_open("console", NVS_READONLY, &h) == ESP_OK) {
-        int8_t i8;
-        uint8_t u8;
-        if (nvs_get_i8(h, "gain", &i8) == ESP_OK && i8 >= -12 && i8 <= 0) s.gain_db = i8;
-        if (nvs_get_u8(h, "cplx", &u8) == ESP_OK && u8 >= 1 && u8 <= 10) s.complexity = u8;
-        if (nvs_get_u8(h, "mcplx", &u8) == ESP_OK && u8 >= 1 && u8 <= 10) s.mic_complexity = u8;
-        if (nvs_get_u8(h, "kbps", &u8) == ESP_OK && u8 >= STADIA_AUDIO_KBPS_MIN && u8 <= STADIA_AUDIO_KBPS_MAX)
-            s.kbps = u8;
-        if (nvs_get_u8(h, "mic", &u8) == ESP_OK) s.mic = u8 != 0;
-        if (nvs_get_u8(h, "ptt", &u8) == ESP_OK) s.ptt = u8 != 0;
-        if (nvs_get_u8(h, "rmb", &u8) == ESP_OK) s.rumble = u8 != 0;
-        if (nvs_get_u8(h, "rmb_l", &u8) == ESP_OK && u8 <= RUMBLE_PCT_MAX) s.rumble_pct[0] = u8;
-        if (nvs_get_u8(h, "rmb_r", &u8) == ESP_OK && u8 <= RUMBLE_PCT_MAX) s.rumble_pct[1] = u8;
-        nvs_close(h);
-    }
-#if !CONFIG_DONGLE_USB_MIC
-    s.mic = false;
-#endif
+    int8_t i8;
+    uint8_t u8;
+    if (board_kv_get_i8("console", "gain", &i8) && i8 >= -12 && i8 <= 0) s.gain_db = i8;
+    if (board_kv_get_u8("console", "cplx", &u8) && u8 >= 1 && u8 <= 10) s.complexity = u8;
+    if (board_kv_get_u8("console", "mcplx", &u8) && u8 >= 1 && u8 <= 10) s.mic_complexity = u8;
+    if (board_kv_get_u8("console", "kbps", &u8) && u8 >= STADIA_AUDIO_KBPS_MIN && u8 <= STADIA_AUDIO_KBPS_MAX)
+        s.kbps = u8;
+    if (board_kv_get_u8("console", "mic", &u8)) s.mic = u8 != 0;
+    if (board_kv_get_u8("console", "ptt", &u8)) s.ptt = u8 != 0;
+    if (board_kv_get_u8("console", "rmb", &u8)) s.rumble = u8 != 0;
+    if (board_kv_get_u8("console", "rmb_l", &u8) && u8 <= RUMBLE_PCT_MAX) s.rumble_pct[0] = u8;
+    if (board_kv_get_u8("console", "rmb_r", &u8) && u8 <= RUMBLE_PCT_MAX) s.rumble_pct[1] = u8;
+    if (!build->mic_available) s.mic = false;
     K.set = s;
     apply_gain(s.gain_db);
     apply_rumble();
@@ -172,19 +115,15 @@ void settings_load(dongle_settings_t *out)
 
 static void settings_save(void)
 {
-    nvs_handle_t h;
-    if (nvs_open("console", NVS_READWRITE, &h) != ESP_OK) return;
-    nvs_set_i8(h, "gain", K.set.gain_db);
-    nvs_set_u8(h, "cplx", K.set.complexity);
-    nvs_set_u8(h, "mcplx", K.set.mic_complexity);
-    nvs_set_u8(h, "kbps", K.set.kbps);
-    nvs_set_u8(h, "mic", K.set.mic);
-    nvs_set_u8(h, "ptt", K.set.ptt);
-    nvs_set_u8(h, "rmb", K.set.rumble);
-    nvs_set_u8(h, "rmb_l", K.set.rumble_pct[0]);
-    nvs_set_u8(h, "rmb_r", K.set.rumble_pct[1]);
-    nvs_commit(h);
-    nvs_close(h);
+    board_kv_set_i8("console", "gain", K.set.gain_db);
+    board_kv_set_u8("console", "cplx", K.set.complexity);
+    board_kv_set_u8("console", "mcplx", K.set.mic_complexity);
+    board_kv_set_u8("console", "kbps", K.set.kbps);
+    board_kv_set_u8("console", "mic", K.set.mic);
+    board_kv_set_u8("console", "ptt", K.set.ptt);
+    board_kv_set_u8("console", "rmb", K.set.rumble);
+    board_kv_set_u8("console", "rmb_l", K.set.rumble_pct[0]);
+    board_kv_set_u8("console", "rmb_r", K.set.rumble_pct[1]);
 }
 
 int32_t console_gain_q15(void)
@@ -198,7 +137,7 @@ static void send_line(const char *s, int n)
 {
     if (n <= 0) return;
     if (n >= OUT_MAX - 1) n = OUT_MAX - 2; /* cut: the page drops what it cannot parse */
-    usb_console_write(s, (size_t)n);
+    board_console_write(s, (size_t)n);
 }
 
 /* printf into K.out and send, with the newline */
@@ -219,54 +158,33 @@ static void send_settings(void)
     sendf("{\"t\":\"settings\",\"mode\":%d,\"gain\":%d,\"complexity\":%d,\"mic_complexity\":%d,\"bitrate\":%d,\"mic\":%s,\"mic_running\":%s,\"ptt\":%s,"
           "\"rumble\":%s,\"rumble_left\":%d,\"rumble_right\":%d,\"logs\":%s,\"players\":%d,\"players_running\":%d,"
           "\"usb_players\":%d}",
-          (int)usb_pad_mode(), K.set.gain_db, K.set.complexity, K.set.mic_complexity, K.set.kbps, K.set.mic ? "true" : "false",
+          (int)board_usb_mode(), K.set.gain_db, K.set.complexity, K.set.mic_complexity, K.set.kbps, K.set.mic ? "true" : "false",
           K.set.mic_running ? "true" : "false", stadia_mic_push_to_talk() ? "true" : "false",
           K.set.rumble ? "true" : "false", K.set.rumble_pct[0], K.set.rumble_pct[1], K.logs ? "true" : "false",
-          K.players, K.players_running, usb_pad_players());
+          K.players, K.players_running, board_usb_players());
 }
 
 static void send_info(void)
 {
-    const esp_app_desc_t *app = esp_app_get_description();
-    esp_chip_info_t chip;
-    esp_chip_info(&chip);
-    uint8_t mac[6] = {0};
-    esp_read_mac(mac, ESP_MAC_BASE);
-    sendf("{\"t\":\"info\",\"fw\":\"%s\",\"project\":\"%s\",\"built\":\"%s %s\",\"idf\":\"%s\",\"chip\":\"ESP32-P4 "
-          "rev v%d.%d\",\"cores\":%d,\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"ssid\":\"%s\",\"channel\":%d,"
+    board_info_t b;
+    board_info(&b);
+    const uint8_t *mac = b.mac;
+    sendf("{\"t\":\"info\",\"fw\":\"%s\",\"project\":\"%s\",\"built\":\"%s %s\",\"idf\":\"%s\",\"chip\":\"%s\","
+          "\"cores\":%d,\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"ssid\":\"%s\",\"channel\":%d,"
           "\"audio\":%s,\"modes\":[\"%s\",\"%s\",\"%s\",\"%s\"]}",
-          app->version, app->project_name, app->date, app->time, app->idf_ver, chip.revision / 100, chip.revision % 100,
-          chip.cores, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], CONFIG_DONGLE_SSID, CONFIG_DONGLE_CHANNEL,
-#if CONFIG_DONGLE_USB_AUDIO
-          "true",
-#else
-          "false",
-#endif
-          usb_pad_mode_name(USB_PAD_XINPUT), usb_pad_mode_name(USB_PAD_DS4), usb_pad_mode_name(USB_PAD_SWITCH),
-          usb_pad_mode_name(USB_PAD_HID));
+          b.fw, b.project, b.date, b.time, b.sdk, b.chip, b.cores, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+          b.ssid, b.channel, K.build->audio ? "true" : "false", pad_mode_info(USB_PAD_XINPUT)->name,
+          pad_mode_info(USB_PAD_DS4)->name, pad_mode_info(USB_PAD_SWITCH)->name, pad_mode_info(USB_PAD_HID)->name);
 }
 
-/* ---- the log tee ----------------------------------------------------------------------- */
-
-static int log_vprintf(const char *fmt, va_list ap)
+void console_set_pairing(const dongle_pair_t *pair)
 {
-    if (K.logs && K.log_buf && usb_console_active() && xTaskGetSchedulerState() == taskSCHEDULER_RUNNING &&
-        xSemaphoreTake(K.log_lock, 0) == pdTRUE) {
-        va_list copy;
-        va_copy(copy, ap);
-        int n = vsnprintf(K.log_buf, LOG_LINE, fmt, copy);
-        va_end(copy);
-        if (n > 0) {
-            if (n >= LOG_LINE) { /* cut: still one line */
-                n = LOG_LINE - 1;
-                K.log_buf[n - 1] = '\n';
-            }
-            if (K.log_buf[0] == '{') K.log_buf[0] = '('; /* never mistaken for a message */
-            usb_console_write(K.log_buf, (size_t)n);
-        }
-        xSemaphoreGive(K.log_lock);
-    }
-    return K.prev_vprintf(fmt, ap);
+    K.pair = pair;
+}
+
+bool console_logs_on(void)
+{
+    return K.logs;
 }
 
 /* ---- stats -------------------------------------------------------------------------- */
@@ -274,22 +192,22 @@ static int log_vprintf(const char *fmt, va_list ap)
 void console_pad(int player, const usb_pad_state_t *st)
 {
     if (!K.started || player < 0 || player >= STADIA_MAX_CONTROLLERS) return;
-    portENTER_CRITICAL(&K.pad_mux);
+    port_mutex_lock(K.pad_lock);
     K.pad[player] = *st;
     K.pad_new |= 1u << player;
-    portEXIT_CRITICAL(&K.pad_mux);
+    port_mutex_unlock(K.pad_lock);
 }
 
 static void send_pad(void)
 {
-    int64_t now = esp_timer_get_time();
+    int64_t now = port_now_us();
     for (int i = 0; i < STADIA_MAX_CONTROLLERS; i++) {
         if (!(K.pad_new & (1u << i)) || now - K.pad_sent_us[i] < PAD_MIN_US) continue;
         usb_pad_state_t p;
-        portENTER_CRITICAL(&K.pad_mux);
+        port_mutex_lock(K.pad_lock);
         p = K.pad[i];
         K.pad_new &= ~(1u << i);
-        portEXIT_CRITICAL(&K.pad_mux);
+        port_mutex_unlock(K.pad_lock);
         K.pad_sent_us[i] = now;
         sendf("{\"t\":\"pad\",\"p\":%d,\"b\":%u,\"x\":%u,\"lt\":%u,\"rt\":%u,\"lx\":%d,\"ly\":%d,\"rx\":%d,\"ry\":%d}", i,
               p.buttons, p.extra, p.lt, p.rt, p.lx, p.ly, p.rx, p.ry);
@@ -313,108 +231,21 @@ static int players_json(char *out, int cap)
                         i ? "," : "", p->known ? "true" : "false", p->device_id, p->ip, (int)p->seen_s,
                         p->display_state ? p->display_state : "none", p->display_up ? "true" : "false",
                         p->game_up ? "true" : "false", bat, ping, (unsigned)p->input_series, (unsigned)p->input_gaps,
-                        i < usb_pad_players() ? "true" : "false");
+                        i < board_usb_players() ? "true" : "false");
     }
     if (len < cap - 1) len += snprintf(out + len, cap - len, "]");
     return len;
-}
-
-/* CPU per core from the idle tasks' run time since the last call. Cheap: a few reads under the
- * kernel lock, once a second. */
-static void cpu_cores(void)
-{
-#if CONSOLE_CPU
-    int64_t now = esp_timer_get_time();
-    int64_t wall = now - K.prev_us;
-    bool have_prev = K.prev_us != 0 && wall > 0;
-    for (int c = 0; c < portNUM_PROCESSORS && c < 2; c++) {
-        configRUN_TIME_COUNTER_TYPE run = ulTaskGetIdleRunTimeCounterForCore(c);
-        if (have_prev) {
-            int64_t idle_us = (int64_t)(configRUN_TIME_COUNTER_TYPE)(run - K.idle_prev[c]);
-            int busy = 100 - (int)(idle_us * 100 / wall);
-            K.cpu[c] = busy < 0 ? 0 : busy > 100 ? 100 : busy;
-        }
-        K.idle_prev[c] = run;
-    }
-    K.prev_us = now;
-#endif
-}
-
-/* Each task's share of a core since the last list. uxTaskGetSystemState() holds the kernel's
- * critical section (interrupts off) while it measures every task's free stack: about 6 ms on
- * the board, long enough for the USB interrupt to miss ~50 headphone packets (usb_audio.c). So
- * it runs every 2 s only while the headphones are idle, and once on "tasks" from the host. */
-static void tasks_snapshot(void)
-{
-#if CONSOLE_CPU
-    if (!K.tasks) return;
-    configRUN_TIME_COUNTER_TYPE total;
-    UBaseType_t n = uxTaskGetSystemState(K.tasks, MAX_TASKS, &total);
-    int64_t now = esp_timer_get_time();
-    int64_t wall = now - K.tasks_prev_us;
-    if (K.tasks_prev_us != 0 && wall > 0) {
-        int len = snprintf(K.out, OUT_MAX, "{\"t\":\"tasks\",\"ms\":%d,\"list\":[", (int)(wall / 1000));
-        bool first = true;
-        for (UBaseType_t i = 0; i < n && len < OUT_MAX - 80; i++) {
-            configRUN_TIME_COUNTER_TYPE before = 0;
-            bool known = false;
-            for (int j = 0; j < K.nprev; j++) {
-                if (K.prev[j].num == K.tasks[i].xTaskNumber) {
-                    before = K.prev[j].run;
-                    known = true;
-                    break;
-                }
-            }
-            if (!known) continue;
-            uint32_t pm = (uint32_t)((int64_t)(configRUN_TIME_COUNTER_TYPE)(K.tasks[i].ulRunTimeCounter - before) * 1000 / wall);
-            len += snprintf(K.out + len, OUT_MAX - len, "%s[\"%s\",%u,%u,%u]", first ? "" : ",", K.tasks[i].pcTaskName,
-                            (unsigned)pm, (unsigned)K.tasks[i].uxCurrentPriority,
-                            (unsigned)K.tasks[i].usStackHighWaterMark);
-            first = false;
-        }
-        if (len < OUT_MAX - 3) {
-            len += snprintf(K.out + len, OUT_MAX - len, "]}\n");
-            send_line(K.out, len);
-        }
-    }
-    K.nprev = 0;
-    for (UBaseType_t i = 0; i < n && K.nprev < MAX_TASKS; i++) {
-        K.prev[K.nprev].num = K.tasks[i].xTaskNumber;
-        K.prev[K.nprev].run = K.tasks[i].ulRunTimeCounter;
-        K.nprev++;
-    }
-    K.tasks_prev_us = now;
-#endif
-}
-
-/* The controller's signal, from the C6 (an RPC over SDIO): every 2 s at most. */
-static void wifi_poll(void)
-{
-    int64_t now = esp_timer_get_time();
-    if (now - K.wifi_at < 2000000) return;
-    K.wifi_at = now;
-    wifi_sta_list_t list;
-    if (esp_wifi_ap_get_sta_list(&list) != ESP_OK) {
-        K.rssi_ok = false;
-        return;
-    }
-    K.stations = list.num;
-    K.rssi_ok = list.num > 0;
-    int best = -127;
-    for (int i = 0; i < list.num; i++) {
-        if (list.sta[i].rssi > best) best = list.sta[i].rssi;
-    }
-    K.rssi = best;
 }
 
 static void send_stats(void)
 {
     stadia_stats_t s;
     stadia_get_stats(&s);
-    usb_pad_audio_stats_t u;
-    usb_pad_audio_stats(&u);
+    board_audio_stats_t u;
+    board_usb_audio_stats(&u);
+    const board_stats_t *b = &K.bs;
     char rssi[12] = "null", bat[12] = "null", ping[2][12] = {"null", "null"};
-    if (K.rssi_ok) snprintf(rssi, sizeof(rssi), "%d", K.rssi);
+    if (b->rssi_ok) snprintf(rssi, sizeof(rssi), "%d", b->rssi);
     if (s.battery_pct >= 0) snprintf(bat, sizeof(bat), "%d", s.battery_pct);
     for (int i = 0; i < 2; i++) {
         if (s.ping_us[i] >= 0) snprintf(ping[i], sizeof(ping[i]), "%d", (int)s.ping_us[i]);
@@ -430,11 +261,9 @@ static void send_stats(void)
           "\"talk\":%s},"
           "\"usb\":{\"mode\":%d,\"mounted\":%s,\"play\":%s,\"rec\":%s,\"vol\":[%d,%d],\"mute\":[%s,%s],\"pkts\":%u,"
           "\"fail\":%u,\"ovf\":%u,\"miss\":%u,\"mpkts\":%u,\"munder\":%u,\"mskip\":%u,\"mdrop\":%u,\"mbuf\":%u,\"cdrop\":%u}}",
-          (long long)(esp_timer_get_time() / 1000), players, K.cpu[0], K.cpu[1],
-          (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-          (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
-          (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), s.display_state ? s.display_state : "none",
-          s.display_up ? "true" : "false", s.game_up ? "true" : "false", rssi, K.stations,
+          (long long)port_now_ms(), players, b->cpu[0], b->cpu[1], b->heap[0], b->heap[1], b->heap[2],
+          s.display_state ? s.display_state : "none", s.display_up ? "true" : "false", s.game_up ? "true" : "false",
+          rssi, b->stations,
           bat, (int)s.battery_age_s, ping[0], ping[1], (unsigned)s.pings_sent, (unsigned)s.pings_answered,
           (unsigned)s.input_series, (unsigned)s.input_gaps, (unsigned)s.input_repeats,
           s.audio_route ? "true" : "false", s.audio_complexity, s.audio_mic_complexity, s.audio_complexity_now, (unsigned)s.audio_kbps, (unsigned)s.audio_encoded, (unsigned)s.audio_sent,
@@ -442,11 +271,11 @@ static void send_stats(void)
           (unsigned)s.audio_resyncs, (unsigned long long)s.audio_bytes, (unsigned long long)s.audio_enc_us,
           (unsigned)s.audio_enc_us_max, (unsigned)s.mic_packets, (unsigned)s.mic_muted, (unsigned)s.mic_decoded,
           (unsigned)s.mic_lost, (unsigned)s.mic_errors, (unsigned)s.mic_dropped, s.mic_peak, (int)s.mic_age_ms,
-          s.mic_talking ? "true" : "false", (int)usb_pad_mode(), usb_pad_mounted() ? "true" : "false",
+          s.mic_talking ? "true" : "false", (int)board_usb_mode(), board_usb_mounted() ? "true" : "false",
           u.playing ? "true" : "false", u.recording ? "true" : "false", u.volume[0], u.volume[1],
           u.mute[0] ? "true" : "false", u.mute[1] ? "true" : "false", (unsigned)u.packets, (unsigned)u.failed,
           (unsigned)u.overflows, (unsigned)u.missed, (unsigned)u.mic_packets, (unsigned)u.mic_underruns, (unsigned)u.mic_skips,
-          (unsigned)u.mic_dropped, (unsigned)u.mic_buffered, (unsigned)usb_console_dropped());
+          (unsigned)u.mic_dropped, (unsigned)u.mic_buffered, (unsigned)board_console_dropped());
 }
 
 /* ---- commands ------------------------------------------------------------------------ */
@@ -464,8 +293,8 @@ static void cmd_set(const char *key, const char *val)
     if (end == val) { reply_err("not a number"); return; }
     if (!strcmp(key, "mode")) {
         if (v < 0 || v >= USB_PAD_MODE_COUNT) { reply_err("mode is 0-3"); return; }
-        sendf("{\"t\":\"ok\",\"key\":\"mode\",\"reconnect\":%s}", (usb_pad_mode_t)v != usb_pad_mode() ? "true" : "false");
-        vTaskDelay(pdMS_TO_TICKS(50)); /* let the answer leave before the board leaves the bus */
+        sendf("{\"t\":\"ok\",\"key\":\"mode\",\"reconnect\":%s}", (usb_pad_mode_t)v != board_usb_mode() ? "true" : "false");
+        port_sleep_ms(50); /* let the answer leave before the board leaves the bus */
         if (!pad_mode_request((usb_pad_mode_t)v)) { reply_err("busy changing modes"); return; }
         return;
     } else if (!strcmp(key, "players")) {
@@ -492,9 +321,7 @@ static void cmd_set(const char *key, const char *val)
         K.set.kbps = (uint8_t)v;
         stadia_audio_set_bitrate((int)v);
     } else if (!strcmp(key, "mic")) {
-#if !CONFIG_DONGLE_USB_MIC
-        if (v) { reply_err("this firmware is built without the microphone"); return; }
-#endif
+        if (v && !K.build->mic_available) { reply_err("this firmware is built without the microphone"); return; }
         K.set.mic = v != 0; /* takes effect at the next start */
     } else if (!strcmp(key, "ptt")) {
         K.set.ptt = v != 0;
@@ -530,8 +357,9 @@ static void cmd_rumble(const char *l, const char *r, const char *ms)
 static void send_pair(bool always)
 {
     static uint32_t gen;
+    if (!K.pair) return;
     pair_status_t p;
-    pair_get_status(&p);
+    K.pair->get_status(&p);
     if (!always && p.gen == gen) return;
     gen = p.gen;
     char msg[200];
@@ -593,7 +421,11 @@ static void handle(char *line)
         sendf("{\"t\":\"ok\",\"key\":\"logs\"}");
         send_settings();
     } else if (!strcmp(cmd, "rumble")) {
-        cmd_rumble(strtok_r(NULL, " \t", &save), strtok_r(NULL, " \t", &save), strtok_r(NULL, " \t", &save));
+        /* one at a time: the order a call's arguments are evaluated in is up to the compiler */
+        char *l = strtok_r(NULL, " \t", &save);
+        char *r = strtok_r(NULL, " \t", &save);
+        char *ms = strtok_r(NULL, " \t", &save);
+        cmd_rumble(l, r, ms);
     } else if (!strcmp(cmd, "ota")) {
         static char none[1];
         ota_run(save ? save : none, sendf);
@@ -605,18 +437,19 @@ static void handle(char *line)
         sendf("{\"t\":\"ok\",\"key\":\"forget\"}");
     } else if (!strcmp(cmd, "pair")) {
         char *v = strtok_r(NULL, " \t", &save);
+        if (!K.pair) { reply_err("this board has no pairing"); return; }
         if (v && !strcmp(v, "stop")) {
-            pair_stop();
+            K.pair->stop();
             sendf("{\"t\":\"ok\",\"key\":\"pair\"}");
             return;
         }
-        const char *err = pair_start();
+        const char *err = K.pair->start();
         if (err) { reply_err(err); return; }
         sendf("{\"t\":\"ok\",\"key\":\"pair\"}");
     } else if (!strcmp(cmd, "reboot")) {
         sendf("{\"t\":\"ok\",\"key\":\"reboot\",\"reconnect\":true}");
-        vTaskDelay(pdMS_TO_TICKS(100));
-        esp_restart();
+        port_sleep_ms(100);
+        board_restart();
     } else {
         reply_err("unknown command");
     }
@@ -624,34 +457,37 @@ static void handle(char *line)
 
 static void console_task(void *arg)
 {
-    char *line = malloc(USB_CONSOLE_LINE_MAX);
-    if (!line) vTaskDelete(NULL);
+    char *line = malloc(BOARD_CONSOLE_LINE_MAX);
+    if (!line) return;
     int64_t next_stats = 0;
     int tick = 0;
     for (;;) {
-        if (usb_console_read_line(line, 50)) handle(line);
-        if (!usb_console_active()) {
+        if (board_console_read_line(line, 50)) handle(line);
+        if (!board_console_active()) {
             next_stats = 0;
-            K.prev_us = K.tasks_prev_us = 0; /* the next CPU figures start fresh */
+            board_stats_reset(); /* the next CPU figures start fresh */
+            K.tasks_have_prev = false;
             if (K.logs) K.logs = false;
-            vTaskDelay(pdMS_TO_TICKS(50));
+            port_sleep_ms(50);
             continue;
         }
         send_pad();
         send_rumble();
         send_pair(false);
-        int64_t now = esp_timer_get_time();
+        int64_t now = port_now_us();
         if (now >= next_stats) {
             next_stats = now + 1000000;
-            wifi_poll();
-            cpu_cores();
-            usb_pad_audio_stats_t u;
-            usb_pad_audio_stats(&u);
+            board_stats(&K.bs);
+            board_audio_stats_t u;
+            board_usb_audio_stats(&u);
             /* on "tasks" with nothing to measure from: a start now, the list 2 s later */
-            if (K.tasks_req && !K.tasks_prev_us) K.tasks_again = 2;
+            if (K.tasks_req && !K.tasks_have_prev) K.tasks_again = 2;
             if ((tick++ % 2 == 1 && !u.playing) || K.tasks_req || (K.tasks_again && !--K.tasks_again)) {
                 K.tasks_req = false;
-                tasks_snapshot();
+                /* never periodically while the headphones play: it can stall the USB interrupt */
+                int n = board_tasks_json(K.out, OUT_MAX);
+                if (n > 0) send_line(K.out, n);
+                K.tasks_have_prev = true;
             }
             send_stats();
         }
@@ -663,24 +499,17 @@ void console_start(bool mic_running, int players)
     K.set.mic_running = mic_running;
     K.players = K.players_running = players;
     K.out = malloc(OUT_MAX);
-    K.log_buf = malloc(LOG_LINE);
-    K.log_lock = xSemaphoreCreateMutex();
-#if CONSOLE_CPU
-    K.tasks = malloc(sizeof(TaskStatus_t) * MAX_TASKS);
-    K.prev = malloc(sizeof(*K.prev) * MAX_TASKS);
-    if (!K.prev) K.tasks = NULL;
-#endif
-    if (!K.out || !K.log_lock) {
-        ESP_LOGE(TAG, "no memory for the console");
+    K.pad_lock = port_mutex_new();
+    if (!K.out || !K.pad_lock) {
+        SLOGE(TAG, "no memory for the console");
         return;
     }
-    pair_init();
+    if (K.pair) K.pair->init();
     K.started = true;
-    K.prev_vprintf = esp_log_set_vprintf(log_vprintf);
     /* low priority: stats wait for the audio */
-    if (xTaskCreate(console_task, "console", 6144, NULL, 2, NULL) != pdPASS) {
-        ESP_LOGE(TAG, "no memory for the console task");
+    if (!port_spawn_prio(console_task, NULL, "console", 6144, 2)) {
+        SLOGE(TAG, "no memory for the console task");
         return;
     }
-    ESP_LOGI(TAG, "console on the USB serial port (web console: Chrome or Edge, see firmware/esp32p4/console)");
+    SLOGI(TAG, "console on the USB serial port (web console: Chrome or Edge, see %s)", K.build->repo_path);
 }

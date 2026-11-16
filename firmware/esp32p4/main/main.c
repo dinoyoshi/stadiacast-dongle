@@ -23,6 +23,7 @@
 #include <stdio.h>
 
 #include "dongle.h"
+#include "dongle_board_esp32p4.h"
 #include "stadia.h"
 #include "usb_pad.h"
 
@@ -34,6 +35,44 @@
 #include "sdkconfig.h"
 
 static const char *TAG = "dongle";
+
+#ifndef CONFIG_DONGLE_OPUS_COMPLEXITY
+#define CONFIG_DONGLE_OPUS_COMPLEXITY 8
+#endif
+#ifndef CONFIG_DONGLE_OPUS_MIC_COMPLEXITY
+#define CONFIG_DONGLE_OPUS_MIC_COMPLEXITY 4
+#endif
+#ifndef CONFIG_DONGLE_OPUS_BITRATE
+#define CONFIG_DONGLE_OPUS_BITRATE 96
+#endif
+
+/* What this build offers, and the console's settings before anyone changes them (Kconfig). */
+static const dongle_build_t s_build = {
+#if CONFIG_DONGLE_USB_AUDIO
+    .audio = true,
+#endif
+#if CONFIG_DONGLE_USB_MIC
+    .mic_available = true,
+#endif
+    .defaults =
+        {
+            .gain_db = 0,
+            .complexity = CONFIG_DONGLE_OPUS_COMPLEXITY,
+            .mic_complexity = CONFIG_DONGLE_OPUS_MIC_COMPLEXITY,
+            .kbps = CONFIG_DONGLE_OPUS_BITRATE,
+#if CONFIG_DONGLE_USB_MIC
+            .mic = true,
+#endif
+#if CONFIG_DONGLE_MIC_PUSH_TO_TALK
+            .ptt = true,
+#endif
+            .rumble = true,
+            .rumble_pct = {100, 100},
+        },
+    .repo_path = "firmware/esp32p4/console",
+};
+
+static const dongle_pair_t s_pairing = {pair_init, pair_start, pair_stop, pair_get_status};
 
 /* Which players' controllers are connected, for the LED: steady while any is. */
 static volatile uint32_t s_connected;
@@ -105,7 +144,7 @@ void app_main(void)
 #endif
     dongle_settings_t set;
     rumble_init();
-    settings_load(&set);
+    settings_load(&s_build, &set);
     const char *known[STADIA_MAX_CONTROLLERS];
     int players = players_load(known);
 #if CONFIG_DONGLE_CONSOLE
@@ -156,7 +195,9 @@ void app_main(void)
     }
 #endif
 #if CONFIG_DONGLE_CONSOLE
+    console_set_pairing(&s_pairing);
     console_start(cfg.mic, players);
+    board_console_start();
 #endif
     ota_confirm_when_up(servers);
     status_led_set(LED_WAITING);
