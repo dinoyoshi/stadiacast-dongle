@@ -22,8 +22,11 @@ is in [docs/progress.md](docs/progress.md).
 | Runs from the OTG USB-C port alone, LED shows its state | tested on the board |
 | Updates the C6's ESP-Hosted firmware from the P4 | done once: 2.12.11 to 2.13.1 |
 | Headset microphone: the headset on the controller is the PC's USB microphone, push to talk on the Assistant button | tested on Linux (PipeWire) |
-| Several controllers at once (up to 4), one USB gamepad each in Xbox 360 and HID modes | tested on a PC with two fake controllers; board test pending |
-| Pairing a controller from the web console over the board's own Bluetooth, no PC tools | built; board test pending |
+| Web console in the browser over the dongle's USB cable: live stats, settings, rumble test | tested on the board (Linux) |
+| Controller battery and connection quality in the web console | battery tested on the board |
+| Firmware updates from the web console, with rollback | tested on the board |
+| Pairing a controller from the web console over the board's own Bluetooth, no PC tools | tested on the board |
+| Several controllers at once (up to 4), one USB gamepad each in Xbox 360 and HID modes | tested on a PC with two fake controllers; on the board with one real controller only |
 
 The controller needs its **Wi-Fi firmware** (ours runs build 316382; the Python receiver is
 tested with `ota.282115`). See [Known limits](#known-limits) for what is rough.
@@ -100,9 +103,10 @@ That happens once per controller. The dongle can do it itself, through the C6's 
 2. In the [web console](#web-console), Controllers card, press **Pair a controller** (or send
    `pair` from a terminal). The dongle finds the controller, reads its key, and gives it the
    hotspot's name and password, encrypted for that controller. The card follows each step.
-3. The controller joins the hotspot. Its first start after setup never connects (the firmware
-   does that, see `docs/protocol.md` section 11): wait a minute, turn it off (hold Stadia 4 s) and
-   wake it. From then on it connects like any other wake.
+3. The controller joins the hotspot. In our test it connected by itself about 20 s after
+   pairing. If it doesn't (its first start after setup can skip the session, see
+   `docs/protocol.md` section 11), wait a minute, turn it off (hold Stadia 4 s) and wake it.
+   From then on it connects like any other wake.
 
 Or from any PC with Bluetooth, with the Python package's provisioning tool:
 
@@ -179,11 +183,10 @@ Nintendo B.
 | Options (⋯) | Back | Share | − | button 7 |
 | Capture | (none) | touchpad click | Capture | button 12 |
 | Assistant | (none) | (none) | (none) | button 13 |
-
-Assistant is also push to talk for the headset microphone (below).
 | L2 / R2 | analog triggers | analog + digital | ZL / ZR (digital) | analog axes |
 
-Sticks are passed through raw (no deadzone, as a real pad).
+Sticks are passed through raw (no deadzone, as a real pad). Assistant is also push to talk for
+the headset microphone (below).
 
 ### Headset audio
 
@@ -202,6 +205,29 @@ and Android drive without anything to install.
 
 A page that shows what the dongle is doing and changes its settings, over USB: plug the dongle
 into the computer, open the console in Chrome or Edge (desktop) and press **Connect**.
+
+### Using the console, step by step
+
+1. **Connect.** Plug the dongle's OTG port into the computer and open
+   [dinoyoshi.github.io/stadiacast](https://dinoyoshi.github.io/stadiacast/) in Chrome or Edge.
+   Press **Connect** and pick the dongle's serial port in the browser's list (on Linux, the one
+   named after the gamepad, usually `/dev/ttyACM*`). The cards fill in within a second. On Linux
+   your user needs to be in the `dialout` group (`uucp` on Arch) first.
+2. **Settings.** In the Settings card, a change applies as soon as you pick it and is saved on
+   the dongle: gamepad mode (the dongle leaves USB and comes back as the new controller; the page
+   reconnects), headphone gain, Opus complexity and bitrate, push to talk. The microphone switch
+   and the number of players take effect after **Restart dongle**. **Reset settings** goes back
+   to the build's defaults. Rumble on/off and strength are in the Rumble card, with test buttons.
+3. **Install latest.** In the Update firmware card, compare the running version with the
+   published one and press **Install latest** when they differ. Keep the cable in for about half
+   a minute; the dongle restarts on the new firmware and the page reconnects. If anything goes
+   wrong, the dongle goes back to the old firmware by itself (details below).
+4. **Pair.** To set up a controller for the dongle, put it in setup mode (off, then hold Y and
+   press Stadia: the light pulses orange), then press **Pair a controller** in the Controllers
+   card and confirm. The card shows each step; the controller then joins the dongle's hotspot.
+   See [First-time controller setup](#first-time-controller-setup).
+
+### What the cards show
 
 - Hosted: `https://dinoyoshi.github.io/stadiacast/` (once GitHub Pages is on, see below), or
   open `console/index.html` from a checkout. Add `?demo` to look around without a dongle.
@@ -270,15 +296,19 @@ GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Acti
 
 ## Known limits
 
-- Some loud songs clip a little in the headset; a few dB of headroom before the Opus encoder is
-  the likely fix.
+- Some loud songs clip a little in the headset. Lowering the headphone gain in the web console
+  a few dB is the likely fix; not yet tried.
+- The Opus bitrate setting works, but nobody has compared bitrates by ear yet; 96 kbps is the
+  default.
 - Rumble is tested in Xbox 360 mode. DualShock 4 and Switch Pro rumble, and the Switch Pro mode
   on a real Switch console, are untested.
-- The headset microphone is tested on Linux only. While it runs, the headphones' stream has a
-  few more underruns (3 to 6 per 10 s instead of 0 to 1): the P4 is close to its limit encoding
-  and decoding at once.
-- Several controllers are tested on a PC build only (two fake controllers), not yet with two
-  real controllers on the board. Pairing over the board's Bluetooth is untested on the board.
+- The headset microphone is tested on Linux only; Windows is untested. While Assistant is held
+  (the mic running) the headphones may crackle a little: their stream has 1 to 3 underruns per
+  10 s instead of about 0, as the P4 is close to its limit encoding and decoding at once. A
+  lower Opus complexity is the idea to try.
+- Several controllers are tested on a PC build (two fake controllers) and on the board with one
+  real controller; players 2 to 4 with real controllers are untested. Pairing over the board's
+  Bluetooth is tested on the board with one controller.
 - The controller needs its Wi-Fi firmware; a Bluetooth-mode controller has to be flashed back
   first ([docs/step1-baseline.md](docs/step1-baseline.md)).
 
