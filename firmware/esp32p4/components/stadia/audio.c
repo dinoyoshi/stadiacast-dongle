@@ -56,7 +56,7 @@ static struct {
     uint32_t ts;
     int64_t last_frame_us;
     /* shared, under port_lock */
-    frame_t q[QUEUE_LEN];
+    frame_t *q; /* QUEUE_LEN frames, in PSRAM: out of .bss (see mic.c) and internal RAM */
     int head, count;
     uint32_t encoded, trimmed, enc_us_sum, enc_us_max, bytes;
     int64_t last_queued_ms;
@@ -77,6 +77,11 @@ static struct {
 void audio_init(const stadia_config_t *cfg)
 {
     A.complexity = cfg->audio_complexity ? cfg->audio_complexity : 8;
+    if (!A.q) A.q = port_alloc_bulk(QUEUE_LEN * sizeof(frame_t));
+    if (!A.q) {
+        SLOGE(TAG, "no memory for the audio queue");
+        A.enc_failed = true; /* no frames to queue: encoder_ready() says no */
+    }
     uint8_t r[4];
     port_random(r, sizeof(r));
     A.ssrc = 0x51A00000u | (uint32_t)(r[0] << 8 | r[1]); /* its own SSRC, not the input ACKs' */
