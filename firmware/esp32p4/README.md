@@ -70,11 +70,12 @@ offset 0: `esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle.bin`, or in 
 | hotspot name / password / channel | `stadiacast-dongle` / `stadiacast` / 6 |
 | USB headphones (off: gamepad only) | on |
 | Opus encoder complexity | 8 |
+| Opus bitrate (kbit/s, 32-160) | 96 |
 | controller mode at the first power-up | Xbox 360 |
 | status LED GPIO (-1: none) | 3 |
 | USB serial console for the web console | on |
 
-The headphone gain, Opus complexity, microphone and push to talk can also be changed at run time
+The headphone gain, Opus complexity and bitrate, microphone and push to talk can also be changed at run time
 from the web console (below); what it sets is saved on the board and wins over menuconfig.
 
 ## First-time controller setup
@@ -167,7 +168,7 @@ into the computer, open the console in Chrome or Edge (desktop) and press **Conn
   time, microphone packets and level, CPU per core, each task's CPU share, free memory, the
   controller's input, and the firmware's log.
 - Settings: gamepad mode, headphone gain (-12 to 0 dB before the Opus encoder), Opus complexity,
-  microphone (after a restart), push to talk; restart and reset buttons.
+  Opus bitrate (32 to 160 kbps), microphone (after a restart), push to talk; restart and reset buttons.
 
 The dongle carries a USB serial port for it in every mode (`/dev/ttyACM*` on Linux, a COM port
 on Windows, no driver needed). The page uses Web Serial, which Firefox and Safari don't have. On
@@ -176,7 +177,7 @@ dongle comes back as another USB device: the browser reconnects by itself once e
 been picked in the Connect dialog once.
 
 The same port works from a terminal (`screen /dev/ttyACM0`): type `hello`, `get`,
-`set gain -3`, `set complexity 5`, `set mode 1`, `logs on`, `reboot`. The protocol is described
+`set gain -3`, `set complexity 5`, `set bitrate 64`, `set mode 1`, `logs on`, `reboot`. The protocol is described
 at the top of `main/console.c`.
 
 GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Actions". The
@@ -254,7 +255,7 @@ after DTLS connects, the same as the Python receiver.
   OTG port.
 
   ```
-  USB (iso OUT every microframe) -> 20 ms frames -> Opus 96 kbps (libopus, fixed point)
+  USB (iso OUT every microframe) -> 20 ms frames -> Opus 96 kbps by default (libopus, fixed point)
     -> RTP PT 111 -> SRTP (the display link's DTLS keys) -> UDP to the controller
   ```
 

@@ -14,7 +14,8 @@
  *   {"t":"ok"|"err",...}  the answer to a command
  *   anything else         the firmware's log, while "logs on"
  * From the host, a line each: hello | get | set <key> <value> | defaults | logs on|off | reboot
- *   keys: mode 0-3, gain -12..0 (dB before the Opus encoder), complexity 1-10, mic 0/1 (after a
+ *   keys: mode 0-3, gain -12..0 (dB before the Opus encoder), complexity 1-10,
+ *   bitrate 32-160 (Opus kbit/s), mic 0/1 (after a
  *   restart), ptt 0/1 (push to talk)
  *
  * The settings live in NVS ("console"), the mode where pad_mode.c keeps it. All of this costs the
@@ -57,6 +58,9 @@ static const char *TAG = "console";
 #ifndef CONFIG_DONGLE_OPUS_COMPLEXITY
 #define CONFIG_DONGLE_OPUS_COMPLEXITY 8
 #endif
+#ifndef CONFIG_DONGLE_OPUS_BITRATE
+#define CONFIG_DONGLE_OPUS_BITRATE 96
+#endif
 
 static struct {
     dongle_settings_t set;
@@ -95,6 +99,7 @@ static void defaults(dongle_settings_t *s)
     *s = (dongle_settings_t){
         .gain_db = 0,
         .complexity = CONFIG_DONGLE_OPUS_COMPLEXITY,
+        .kbps = CONFIG_DONGLE_OPUS_BITRATE,
 #if CONFIG_DONGLE_USB_MIC
         .mic = true,
 #endif
@@ -119,6 +124,8 @@ void settings_load(dongle_settings_t *out)
         uint8_t u8;
         if (nvs_get_i8(h, "gain", &i8) == ESP_OK && i8 >= -12 && i8 <= 0) s.gain_db = i8;
         if (nvs_get_u8(h, "cplx", &u8) == ESP_OK && u8 >= 1 && u8 <= 10) s.complexity = u8;
+        if (nvs_get_u8(h, "kbps", &u8) == ESP_OK && u8 >= STADIA_AUDIO_KBPS_MIN && u8 <= STADIA_AUDIO_KBPS_MAX)
+            s.kbps = u8;
         if (nvs_get_u8(h, "mic", &u8) == ESP_OK) s.mic = u8 != 0;
         if (nvs_get_u8(h, "ptt", &u8) == ESP_OK) s.ptt = u8 != 0;
         nvs_close(h);
@@ -137,6 +144,7 @@ static void settings_save(void)
     if (nvs_open("console", NVS_READWRITE, &h) != ESP_OK) return;
     nvs_set_i8(h, "gain", K.set.gain_db);
     nvs_set_u8(h, "cplx", K.set.complexity);
+    nvs_set_u8(h, "kbps", K.set.kbps);
     nvs_set_u8(h, "mic", K.set.mic);
     nvs_set_u8(h, "ptt", K.set.ptt);
     nvs_commit(h);
@@ -172,9 +180,9 @@ static void sendf(const char *fmt, ...)
 
 static void send_settings(void)
 {
-    sendf("{\"t\":\"settings\",\"mode\":%d,\"gain\":%d,\"complexity\":%d,\"mic\":%s,\"mic_running\":%s,\"ptt\":%s,"
+    sendf("{\"t\":\"settings\",\"mode\":%d,\"gain\":%d,\"complexity\":%d,\"bitrate\":%d,\"mic\":%s,\"mic_running\":%s,\"ptt\":%s,"
           "\"logs\":%s}",
-          (int)usb_pad_mode(), K.set.gain_db, K.set.complexity, K.set.mic ? "true" : "false",
+          (int)usb_pad_mode(), K.set.gain_db, K.set.complexity, K.set.kbps, K.set.mic ? "true" : "false",
           K.set.mic_running ? "true" : "false", stadia_mic_push_to_talk() ? "true" : "false",
           K.logs ? "true" : "false");
 }
@@ -336,7 +344,7 @@ static void send_stats(void)
     if (K.rssi_ok) snprintf(rssi, sizeof(rssi), "%d", K.rssi);
     sendf("{\"t\":\"stats\",\"up\":%lld,\"cpu\":[%d,%d],\"heap\":[%u,%u,%u],"
           "\"ctl\":{\"state\":\"%s\",\"disp\":%s,\"game\":%s,\"rssi\":%s,\"sta\":%d},"
-          "\"audio\":{\"route\":%s,\"cplx\":%u,\"enc\":%u,\"sent\":%u,\"lost\":%u,\"trim\":%u,\"under\":%u,"
+          "\"audio\":{\"route\":%s,\"cplx\":%u,\"kbps\":%u,\"enc\":%u,\"sent\":%u,\"lost\":%u,\"trim\":%u,\"under\":%u,"
           "\"resync\":%u,\"bytes\":%llu,\"enc_us\":%llu,\"enc_max\":%u},"
           "\"mic\":{\"pkts\":%u,\"muted\":%u,\"dec\":%u,\"lost\":%u,\"err\":%u,\"drop\":%u,\"peak\":%d,\"age\":%d,"
           "\"talk\":%s},"
@@ -347,7 +355,7 @@ static void send_stats(void)
           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
           (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), s.display_state ? s.display_state : "none",
           s.display_up ? "true" : "false", s.game_up ? "true" : "false", rssi, K.stations,
-          s.audio_route ? "true" : "false", s.audio_complexity, (unsigned)s.audio_encoded, (unsigned)s.audio_sent,
+          s.audio_route ? "true" : "false", s.audio_complexity, (unsigned)s.audio_kbps, (unsigned)s.audio_encoded, (unsigned)s.audio_sent,
           (unsigned)s.audio_not_sent, (unsigned)s.audio_trimmed, (unsigned)s.audio_underruns,
           (unsigned)s.audio_resyncs, (unsigned long long)s.audio_bytes, (unsigned long long)s.audio_enc_us,
           (unsigned)s.audio_enc_us_max, (unsigned)s.mic_packets, (unsigned)s.mic_muted, (unsigned)s.mic_decoded,
@@ -386,6 +394,10 @@ static void cmd_set(const char *key, const char *val)
         if (v < 1 || v > 10) { reply_err("complexity is 1-10"); return; }
         K.set.complexity = (uint8_t)v;
         stadia_audio_set_complexity((int)v);
+    } else if (!strcmp(key, "bitrate")) {
+        if (v < STADIA_AUDIO_KBPS_MIN || v > STADIA_AUDIO_KBPS_MAX) { reply_err("bitrate is 32-160 kbps"); return; }
+        K.set.kbps = (uint8_t)v;
+        stadia_audio_set_bitrate((int)v);
     } else if (!strcmp(key, "mic")) {
 #if !CONFIG_DONGLE_USB_MIC
         if (v) { reply_err("this firmware is built without the microphone"); return; }
@@ -422,6 +434,7 @@ static void handle(char *line)
         K.set.mic_running = running;
         apply_gain(K.set.gain_db);
         stadia_audio_set_complexity(K.set.complexity);
+        stadia_audio_set_bitrate(K.set.kbps);
         stadia_mic_set_push_to_talk(K.set.ptt);
         settings_save();
         sendf("{\"t\":\"ok\",\"key\":\"defaults\"}");

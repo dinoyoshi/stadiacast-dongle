@@ -5,6 +5,7 @@
  * level outlives the controller's 5 s haptics watchdog only through our refreshes.
  * STADIA_AUDIO=1 opens the headset audio route and plays a 440 Hz tone into it, 10 ms at a time
  * as a USB host would (the fake controller counts the frames it would play).
+ * STADIA_AUDIO_KBPS=48 sets the Opus bitrate (default 96).
  * STADIA_MIC=1 also decodes what the controller sends as its microphone (run the fake
  * controller with --mic-echo: it sends the tone back) and prints the decoded tone's frequency.
  * STADIA_MIC_PTT=1 passes it only while Assistant is held (fake controller --talk SECONDS). */
@@ -90,6 +91,7 @@ int main(int argc, char **argv)
         .start_game = getenv("STADIA_START_GAME") != NULL,
         .allow_clearcut = getenv("STADIA_ALLOW_CLEARCUT") != NULL,
         .audio = getenv("STADIA_AUDIO") != NULL,
+        .audio_kbps = getenv("STADIA_AUDIO_KBPS") ? (uint8_t)atoi(getenv("STADIA_AUDIO_KBPS")) : 0,
         .mic = getenv("STADIA_MIC") != NULL,
         .mic_push_to_talk = getenv("STADIA_MIC_PTT") != NULL,
     };
