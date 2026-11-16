@@ -57,9 +57,18 @@ component registry. An existing `sdkconfig` from an old checkout may predate the
 table or newer settings (such as TLS buffers in PSRAM); delete it and let `sdkconfig.defaults`
 apply.
 
-**Without installing ESP-IDF**, flash a single merged image (made with `idf.py merge-bin`) at
-offset 0: `esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle.bin`, or in the browser with
-[ESP Web Tool](https://espressif.github.io/esptool-js/) (address 0x0, Chrome or Edge).
+**Without installing ESP-IDF**, flash the whole-flash image that CI publishes with the web
+console, [stadiacast-dongle-full.bin](https://dinoyoshi.github.io/stadiacast/firmware/stadiacast-dongle-full.bin)
+(or one you made with `idf.py merge-bin`), at offset 0 over the programming port:
+`esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle-full.bin`, or in the browser with
+[ESP Web Tool](https://espressif.github.io/esptool-js/) (address 0x0, Chrome or Edge). After
+that, update from the web console (below), with no tools and over the dongle's own cable.
+
+**Coming from a firmware before web console updates** (the flash layout with one `factory`
+app): flash over the programming port once more, with `idf.py flash` or the full image above.
+That writes the new layout with two app slots and a bootloader that can roll back. The settings
+and the C6 firmware stay where they are. Delete an old `sdkconfig` first so the rollback option in
+`sdkconfig.defaults` applies.
 
 ### Settings
 
@@ -191,13 +200,38 @@ Linux your user needs to be in the `dialout` group (`uucp` on Arch). After a mod
 dongle comes back as another USB device: the browser reconnects by itself once each mode has
 been picked in the Connect dialog once.
 
+### Updating the firmware from the web console
+
+The **Update firmware** card installs new firmware over the same USB cable: no ESP-IDF, no
+esptool, no BOOT button.
+
+- **Install latest** takes the build that CI publishes next to the page
+  (`firmware/stadiacast-dongle.bin`, built from `main` with ESP-IDF 5.5.4 and the defaults in
+  `sdkconfig.defaults`). The card shows which version runs and which is published.
+- **Install a .bin file** takes your own build: `build/stadiacast_dongle.bin` (the app image,
+  not the merged full-flash one).
+
+It takes about half a minute. The image goes to the slot that isn't running, and the dongle only
+switches once all of it is there, its SHA-256 matches, and ESP-IDF accepts it for this chip and
+revision; anything else leaves the old firmware running. The new firmware then starts **on
+trial**: it is kept once the computer has the dongle's USB up and 10 s have passed. If it
+crashes or restarts before that, the bootloader goes back to the old one by itself.
+
+The published build uses the menuconfig defaults (hotspot name and password, LED pin and so on);
+the settings the console changes are in NVS and carry over. A board with a v3 P4 needs its own
+build. The page only has the published build when it comes from GitHub Pages, not from a local
+`index.html`.
+
+### From a terminal
+
 The same port works from a terminal (`screen /dev/ttyACM0`): type `hello`, `get`,
 `set gain -3`, `set complexity 5`, `set bitrate 64`, `set mode 1`, `set rumble 0`,
 `set rumble_left 150`, `rumble 255 255 1000` (a 1 s test, levels 0-255 per motor), `logs on`, `reboot`. The protocol is described
-at the top of `main/console.c`.
+at the top of `main/console.c` (and the firmware update's at the top of `main/ota.c`).
 
 GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Actions". The
-`Web console (GitHub Pages)` workflow then publishes `console/` on every change to it on `main`.
+`Web console and firmware (GitHub Pages)` workflow then builds the firmware and publishes it with
+`console/` on every change under `firmware/esp32p4/` on `main` (pull requests only build it).
 
 ## Known limits
 

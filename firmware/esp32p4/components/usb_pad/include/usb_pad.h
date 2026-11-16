@@ -102,3 +102,7 @@ bool usb_console_write(const char *s, size_t len);
 uint32_t usb_console_dropped(void);
 /* One line the host sent, without its newline, into out (USB_CONSOLE_LINE_MAX bytes). */
 bool usb_console_read_line(char *out, uint32_t timeout_ms);
+/* Raw mode, for a firmware update (main/ota.c): while set, every byte the host sends goes to
+ * cb, from the USB task, instead of becoming lines. NULL goes back to lines. cb must not block. */
+typedef void (*usb_console_raw_cb_t)(const uint8_t *data, size_t n);
+void usb_console_set_raw(usb_console_raw_cb_t cb);

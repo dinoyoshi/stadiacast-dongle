@@ -62,3 +62,13 @@ const char *rumble_test(uint8_t left, uint8_t right, int ms);
 /* What the motors get (0..65535), what the host asks for, and whether a test runs; true when
  * the motors' levels changed since the last call. */
 bool rumble_levels(uint16_t out[2], uint8_t host[2], bool *testing);
+
+/* Firmware updates over the console (ota.c). ota_run() handles the console's "ota" command: a
+ * whole update, after which the board restarts (it returns only when the update failed).
+ * send is the console's line printf. */
+void ota_run(char *args, void (*send)(const char *fmt, ...));
+/* {"t":"ota","state":"idle",...}: the slots, and whether this firmware is on trial. */
+void ota_send_status(void (*send)(const char *fmt, ...));
+/* A freshly updated image boots on trial: keep it once USB is up (else the bootloader rolls back
+ * at the next restart). Call once at start-up. */
+void ota_confirm_when_up(void);

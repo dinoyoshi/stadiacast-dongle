@@ -22,6 +22,7 @@ OTG port, as four kinds of controller, on Linux and Windows.
 | Headset microphone (the controller's headset as the PC's USB microphone) | done | Linux (PipeWire): voice recorded, no clipping, 0 packets lost |
 | Push to talk on the Assistant button | done | board: sound 15-50 ms after the press, stops 0.3 s after release; headphone underruns about 0 per 10 s while the mic is idle |
 | Web console (live stats and settings over a USB serial port, Web Serial page on GitHub Pages) | done | board over USB on Linux (2026-11-16) |
+| Firmware updates from the web console (two app slots, rollback, CI-built image on Pages) | done | builds with ESP-IDF 5.5.4; page tested in demo mode; board test pending |
 
 Test rig: FireBeetle 2 ESP32-P4 with a v1.3 P4, C6 on ESP-Hosted 2.13.1, a Stadia Controller on
 Wi-Fi firmware build 316382, a Linux PC and a Windows PC.
@@ -49,6 +50,7 @@ All merged into `main`.
 | #17 | Adjustable Opus bitrate | headphone stream bitrate 32-160 kbps (default 96, menuconfig `DONGLE_OPUS_BITRATE`), set from the web console or `set bitrate N`, saved in NVS, applied from the next 20 ms frame. Host-tested (48 kbps gives 121 B frames); board test pending |
 | #18 | Rumble settings and test | rumble on/off and strength per motor (0-200%) saved in NVS, applied in `main/rumble.c`; console `set rumble*` and `rumble <l> <r> [ms]` test, live motor levels, a Rumble card on the page. Host-tested; board test pending |
 | #19 | Battery and connection quality in the web console | battery gauge (`ControllerToDisplay` #10) with its age; keepalive STUN round trip per link; input series sequence gaps and unanswered keepalives over the last minute; Good/Fair/Poor verdict. Host-tested with the fake controller (`--battery`, `--input-gap`); board test pending |
+| #20 | Firmware updates from the web console | two app slots (`ota_0`, `ota_1`; `c6_fw` stays at 0x310000) and bootloader rollback; `ota begin <size> <sha256>` then the raw image over the console's serial port, 16 KB window, into a PSRAM stream buffer; SHA-256, ESP-IDF image and project-name checks before the switch; the new image is kept once USB is up for 10 s. CI builds the app and full-flash images with ESP-IDF 5.5.4 and publishes them with the console on Pages. Needs one wired flash for the new layout. Built here; board test pending |
 
 ## Things we learned the hard way
 

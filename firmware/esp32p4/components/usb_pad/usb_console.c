@@ -15,7 +15,8 @@
  * while the port is closed: the host asserts DTR when it opens it, and any line it sends counts
  * as open for a while too, for hosts that do not.
  * In (from the host): bytes up to a newline become a line in a short queue that
- * usb_console_read_line() takes from.
+ * usb_console_read_line() takes from, or, in raw mode (a firmware update), go as they are to the
+ * callback usb_console_set_raw() gave.
  */
 #include "usb_console.h"
 #include "usb_pad.h"
@@ -60,6 +61,7 @@ static struct {
     char line[USB_CONSOLE_LINE_MAX];
     size_t line_len;
     QueueHandle_t rx;
+    volatile usb_console_raw_cb_t raw;
 } C = {.mux = portMUX_INITIALIZER_UNLOCKED};
 
 bool usb_console_init(void)
@@ -132,9 +134,20 @@ bool usb_console_read_line(char *out, uint32_t timeout_ms)
     return xQueueReceive(C.rx, out, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
 }
 
+void usb_console_set_raw(usb_console_raw_cb_t cb)
+{
+    C.line_len = 0; /* nothing half-read carries over either way */
+    C.raw = cb;
+}
+
 static void on_rx(const uint8_t *data, size_t n)
 {
     C.last_rx_us = esp_timer_get_time();
+    usb_console_raw_cb_t raw = C.raw;
+    if (raw) {
+        raw(data, n);
+        return;
+    }
     for (size_t i = 0; i < n; i++) {
         char c = (char)data[i];
         if (c == '\r') continue;

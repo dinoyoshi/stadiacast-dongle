@@ -18,6 +18,7 @@
  * From the host, a line each: hello | get | set <key> <value> | defaults | logs on|off | reboot
  *   | rumble <left 0-255> <right 0-255> [ms]  (a test: through the rumble settings, 1 s by
  *   default, 5 s at most; "rumble 0 0" stops it)
+ *   | ota [begin <size> <sha256>]  (a firmware update: ota.c, which also sends {"t":"ota",...})
  *   keys: mode 0-3, gain -12..0 (dB before the Opus encoder), complexity 1-10,
  *   bitrate 32-160 (Opus kbit/s), mic 0/1 (after a
  *   restart), ptt 0/1 (push to talk), rumble 0/1, rumble_left and rumble_right 0-200 (% strength)
@@ -358,7 +359,7 @@ static void send_stats(void)
     stadia_get_stats(&s);
     usb_pad_audio_stats_t u;
     usb_pad_audio_stats(&u);
-    char rssi[8] = "null", bat[8] = "null", ping[2][12] = {"null", "null"};
+    char rssi[12] = "null", bat[12] = "null", ping[2][12] = {"null", "null"};
     if (K.rssi_ok) snprintf(rssi, sizeof(rssi), "%d", K.rssi);
     if (s.battery_pct >= 0) snprintf(bat, sizeof(bat), "%d", s.battery_pct);
     for (int i = 0; i < 2; i++) {
@@ -477,6 +478,7 @@ static void handle(char *line)
     if (!strcmp(cmd, "hello")) {
         send_info();
         send_settings();
+        ota_send_status(sendf);
     } else if (!strcmp(cmd, "get")) {
         send_settings();
     } else if (!strcmp(cmd, "set")) {
@@ -502,6 +504,9 @@ static void handle(char *line)
         send_settings();
     } else if (!strcmp(cmd, "rumble")) {
         cmd_rumble(strtok_r(NULL, " \t", &save), strtok_r(NULL, " \t", &save), strtok_r(NULL, " \t", &save));
+    } else if (!strcmp(cmd, "ota")) {
+        static char none[1];
+        ota_run(save ? save : none, sendf);
     } else if (!strcmp(cmd, "reboot")) {
         sendf("{\"t\":\"ok\",\"key\":\"reboot\",\"reconnect\":true}");
         vTaskDelay(pdMS_TO_TICKS(100));

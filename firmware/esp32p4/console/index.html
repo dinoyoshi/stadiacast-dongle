@@ -167,6 +167,10 @@ pre.log {
 }
 .log .E { color: var(--bad); } .log .W { color: var(--warn); }
 .muted { color: var(--text-3); }
+.prog { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; margin: 10px 0 4px; }
+.prog i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 4px; transition: width .2s; }
+.fwbox { display: grid; gap: 10px; }
+.fwbox p { margin: 0; color: var(--text-2); }
 .toast {
   position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
   padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 30; opacity: 0; transition: opacity .2s; pointer-events: none;
@@ -310,6 +314,29 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
         </div>
       </section>
 
+      <section class="card" id="fwCard">
+        <h2>Update firmware <span id="fwPill" class="pill">–</span></h2>
+        <div class="fwbox">
+          <dl class="kv">
+            <dt>Running</dt><dd id="fwRunning">–</dd>
+            <dt>Latest build</dt><dd id="fwLatest">–</dd>
+          </dl>
+          <div id="fwNoSlot" class="notice warn" hidden>
+            <p><b>One wired install first.</b> This dongle's flash layout has no room for a second firmware, so it can't update itself yet. Once, over the <b>programming</b> USB-C port: write <a id="fwFullLink" href="firmware/stadiacast-dongle-full.bin" download>stadiacast-dongle-full.bin</a> at address <code>0x0</code> with <a href="https://espressif.github.io/esptool-js/" target="_blank" rel="noopener">ESP Web Tool</a> (or <code>idf.py flash</code>). Your settings are kept. After that, updates work from here.</p>
+          </div>
+          <div class="row">
+            <button id="fwInstall" class="primary" disabled>Install latest</button>
+            <button id="fwPick">Install a .bin file…</button>
+            <input type="file" id="fwFile" accept=".bin,application/octet-stream" hidden>
+          </div>
+          <div id="fwProgress" hidden>
+            <div class="prog"><i id="fwBar"></i></div>
+            <p id="fwState" class="muted"></p>
+          </div>
+          <p class="muted" style="font-size:12.5px">Over this USB cable, about 30 s. The old firmware stays until the new one is fully written and checked, and comes back by itself if the new one doesn't start up.</p>
+        </div>
+      </section>
+
       <section class="card" id="rumbleCard">
         <h2>Rumble <span id="rmbPill" class="pill">–</span></h2>
         <div class="settings">
@@ -434,7 +461,8 @@ async function openPort(port) {
   let reader = null, closed = false;
   const l = {
     port,
-    send: (line) => writer.write(enc.encode(line + "\n")).catch(() => {}),
+    send: (line) => (ota?.raw ? Promise.resolve() : writer.write(enc.encode(line + "\n")).catch(() => {})),
+    sendBytes: (bytes) => writer.write(bytes),
     close: async () => {
       closed = true;
       try { await reader?.cancel(); } catch (e) {}
@@ -498,6 +526,7 @@ async function connectClick() {
 
 async function disconnectClick() {
   wantConnected = false;
+  if (ota) otaFail("disconnected");
   const l = link; link = null;
   if (l) await l.close();
   onClosed("Not connected", "");
@@ -506,6 +535,7 @@ async function disconnectClick() {
 function onLost(l) {
   if (link !== l) return;
   link = null;
+  if (ota) otaFail("the dongle left USB during the update");
   onClosed("Reconnecting…", "warn");
 }
 
@@ -525,6 +555,7 @@ function onOpened() {
   $("intro").hidden = true;
   $("dash").hidden = false;
   prev = null;
+  otaStatus = null;
   linkHist.length = 0;
   link.send("hello");
   if ($("logOn").checked) link.send("logs on");
@@ -532,6 +563,7 @@ function onOpened() {
 
 function onClosed(text, cls) {
   setConn(text, cls);
+  renderFw();
   $("btnConnect").hidden = !!(wantConnected && cls === "warn");
   $("btnDisconnect").hidden = !wantConnected;
   clearTimeout(onClosed.h);
@@ -557,11 +589,12 @@ function onLine(line) {
     let m;
     try { m = JSON.parse(line); } catch (e) { return; }
     switch (m.t) {
-      case "info": info = m; renderInfo(); break;
+      case "info": info = m; renderInfo(); otaReconnected(); break;
       case "settings": settings = m; renderSettings(); break;
       case "stats": renderStats(m); break;
       case "tasks": renderTasks(m); break;
       case "pad": renderPad(m); break;
+      case "ota": onOta(m); break;
       case "rumble": renderRumble(m); break;
       case "ok": if (m.reconnect) { toast(m.key === "reboot" ? "Restarting…" : "Changing mode…"); } break;
       case "err": toast("Dongle: " + m.msg); break;
@@ -572,6 +605,7 @@ function onLine(line) {
 }
 
 function renderInfo() {
+  renderFw();
   $("sysFw").innerHTML = `${esc(info.fw)} <span class="sub">${esc(info.built)}</span>`;
   $("sysChip").textContent = info.chip;
   $("ctlSsid").textContent = `${info.ssid} · ch ${info.channel}`;
@@ -879,6 +913,181 @@ $("logSave").onclick = () => {
   a.click();
 };
 
+/* ---- firmware update (main/ota.c): "ota begin <size> <sha256>", then the image as raw bytes,
+   never more than the board's window past its last "at" ---- */
+let otaStatus = null;   // the board's {"t":"ota","state":"idle",...}
+let latest = null;      // firmware/firmware.json, published with this page
+let ota = null;         // the update under way: {bytes, version, sent, acked, win, raw, pumping}
+const OTA_CHUNK = 4096;
+
+async function loadLatest() {
+  try {
+    const r = await fetch("firmware/firmware.json", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    latest = await r.json();
+  } catch (e) {
+    latest = null;
+  }
+  renderFw();
+}
+
+function renderFw() {
+  const running = info ? info.fw : null;
+  $("fwRunning").innerHTML = running == null ? "–" :
+    `${esc(running)}` + (otaStatus ? ` <span class="sub">${esc(otaStatus.running)}${otaStatus.trial ? ", on trial" : ""}</span>` : "");
+  $("fwLatest").innerHTML = latest ? `${esc(latest.version)} <span class="sub">${esc((latest.built || "").slice(0, 10))}</span>` : '<span class="sub">none published here</span>';
+  const can = !!otaStatus?.can;
+  $("fwNoSlot").hidden = !(otaStatus && !otaStatus.can);
+  $("fwFullLink").hidden = !latest;
+  const busy = !!ota;
+  $("fwInstall").disabled = busy || !link || !can || !latest;
+  $("fwPick").disabled = busy || !link || !can;
+  $("fwInstall").textContent = latest && running === latest.version ? "Reinstall latest" : "Install latest";
+  if (ota) pill($("fwPill"), "Updating", "warn");
+  else if (!otaStatus) pill($("fwPill"), "–", "");
+  else if (!can) pill($("fwPill"), "Needs one wired install", "warn");
+  else if (otaStatus.trial) pill($("fwPill"), "New, on trial", "warn");
+  else if (latest && running && running !== latest.version) pill($("fwPill"), "Update available", "good");
+  else pill($("fwPill"), "Up to date", latest ? "good" : "");
+}
+
+function otaProgress(frac, text, cls) {
+  $("fwProgress").hidden = false;
+  $("fwBar").style.width = Math.round(frac * 100) + "%";
+  const st = $("fwState");
+  st.textContent = text;
+  st.className = cls || "muted";
+}
+
+/* What the image says about itself: esp_image_header_t (chip id at 12), then the first segment's
+   esp_app_desc_t (magic at 32, version at 48, project name at 80). */
+function imageInfo(b) {
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  if (b.length < 256 || b[0] !== 0xe9) return { err: "not an ESP32 app image" };
+  if (dv.getUint16(12, true) !== 18) return { err: "built for another chip than the ESP32-P4" };
+  if (dv.getUint32(32, true) !== 0xabcd5432) return { err: "no app description in the image (a merged full-flash image? use the app .bin)" };
+  const str = (o) => new TextDecoder().decode(b.subarray(o, o + 32)).replace(/\0.*$/s, "");
+  return { version: str(48), project: str(80) };
+}
+
+async function installBytes(bytes, label) {
+  if (!link || ota) return;
+  const im = imageInfo(bytes);
+  if (im.err) { toast("Can't install " + label + ": " + im.err); return; }
+  if (info?.project && im.project !== info.project) { toast(`Can't install ${label}: it is "${im.project}", not a Stadiacast dongle build`); return; }
+  if (!confirm(`Install ${im.version} (${fmtBytes(bytes.length)}) on the dongle?\n\nIt restarts when done. Keep it plugged in until the console reconnects.`)) return;
+  const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((x) => x.toString(16).padStart(2, "0")).join("");
+  ota = { bytes, version: im.version, sent: 0, acked: 0, win: 0, raw: false, pumping: false, t0: performance.now() };
+  otaWatch();
+  renderFw();
+  otaProgress(0, "Erasing the other slot…");
+  link.send(`ota begin ${bytes.length} ${sha}`);
+}
+
+function otaWatch() {
+  clearTimeout(otaWatch.h);
+  otaWatch.h = setTimeout(() => otaFail("the dongle stopped answering"), 30000);
+}
+
+function otaFail(msg) {
+  clearTimeout(otaWatch.h);
+  ota = null;
+  otaProgress(0, "Update failed: " + msg + ". The dongle still runs its old firmware.", "bad-t");
+  renderFw();
+}
+
+async function otaPump() {
+  if (!ota || ota.pumping || !ota.raw) return;
+  ota.pumping = true;
+  try {
+    while (ota && ota.sent < ota.bytes.length && ota.sent - ota.acked < ota.win) {
+      const end = Math.min(ota.bytes.length, ota.sent + OTA_CHUNK, ota.acked + ota.win);
+      const piece = ota.bytes.slice(ota.sent, end);
+      ota.sent = end;
+      await link.sendBytes(piece);
+    }
+  } catch (e) {
+    otaFail("the USB port went away");
+  } finally {
+    if (ota) ota.pumping = false;
+  }
+}
+
+function onOta(m) {
+  if (m.state === "idle") {
+    otaStatus = m;
+    if (otaTrial && !m.trial) { otaProgress(1, `Running ${otaTrial}, kept.`, "good-t"); otaTrial = null; }
+    renderFw();
+    return;
+  }
+  if (!ota) return;
+  otaWatch();
+  const n = ota.bytes.length;
+  switch (m.state) {
+    case "erasing": otaProgress(0, "Erasing the other slot…"); break;
+    case "ready":
+      ota.win = m.win; ota.raw = true;
+      otaProgress(0, "Sending…");
+      otaPump();
+      break;
+    case "recv": {
+      ota.acked = m.at;
+      const s = (performance.now() - ota.t0) / 1000;
+      otaProgress(m.at / n, `Sending… ${fmtBytes(m.at)} of ${fmtBytes(n)} · ${(m.at / 1024 / Math.max(s, 0.1)).toFixed(0)} KB/s`);
+      otaPump();
+      break;
+    }
+    case "verifying": ota.raw = false; otaProgress(1, "Checking the image…"); break;
+    case "done":
+      clearTimeout(otaWatch.h);
+      otaProgress(1, `Installed ${m.version}. Restarting into it…`, "good-t");
+      ota = null;
+      otaStatus = null;
+      otaAfter = m.version;
+      renderFw();
+      break;
+    case "failed": otaFail(m.msg); break;
+  }
+}
+
+/* after the restart: say whether the new firmware is running, and ask again once it is kept */
+let otaAfter = null;
+let otaTrial = null;
+function otaReconnected() {
+  if (!otaAfter || !info) return;
+  if (info.fw === otaAfter) {
+    otaProgress(1, `Running ${otaAfter}. Kept for good once it has been up for 10 s.`, "good-t");
+    otaTrial = otaAfter;
+    setTimeout(() => link?.send("ota"), 12000);
+  } else {
+    otaProgress(0, `The dongle came back with ${info.fw}, not ${otaAfter}: the new firmware didn't start and was rolled back.`, "bad-t");
+  }
+  otaAfter = null;
+}
+
+$("fwInstall").onclick = async () => {
+  if (!latest) return;
+  try {
+    $("fwInstall").disabled = true;
+    otaProgress(0, "Downloading " + latest.version + "…");
+    const r = await fetch("firmware/" + latest.app.file, { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    $("fwProgress").hidden = true;
+    await installBytes(bytes, latest.version);
+  } catch (e) {
+    otaProgress(0, "Couldn't download the firmware: " + (e.message || e), "bad-t");
+  } finally {
+    renderFw();
+  }
+};
+$("fwPick").onclick = () => $("fwFile").click();
+$("fwFile").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (f) await installBytes(new Uint8Array(await f.arrayBuffer()), f.name);
+});
+
 /* ---- demo: a pretend dongle, for a look without one ---- */
 const DEMO = new URLSearchParams(location.search).has("demo");
 function demoLink() {
@@ -889,6 +1098,8 @@ function demoLink() {
   const emit = (o) => setTimeout(() => onLine(JSON.stringify(o)), 30);
   const sendSettings = () => emit({ t: "settings", ...st });
   let tick = 0;
+  let fw = "demo", trial = false, img = null;
+  const sendOta = () => emit({ t: "ota", state: "idle", can: true, running: trial ? "ota_1" : "ota_0", next: trial ? "ota_0" : "ota_1", slot: 3080192, trial });
   const timer = setInterval(() => {
     tick++;
     c.up += 1000;
@@ -913,7 +1124,9 @@ function demoLink() {
   return {
     send(line) {
       const [cmd, k, v] = line.split(" ");
-      if (cmd === "hello") { emit({ t: "info", fw: "demo", project: "stadiacast_dongle", built: "Nov 15 2026 18:00:00", idf: "v5.5.1", chip: "ESP32-P4 rev v1.3", cores: 2, mac: "00:00:00:00:00:00", ssid: "stadiacast-dongle", channel: 6, audio: true, modes: MODES }); sendSettings(); }
+      if (cmd === "ota" && k === "begin") { img = { size: +v, at: 0 }; emit({ t: "ota", state: "erasing" }); setTimeout(() => emit({ t: "ota", state: "ready", win: 16384 }), 1200); }
+      else if (cmd === "ota") sendOta();
+      else if (cmd === "hello") { emit({ t: "info", fw, project: "stadiacast_dongle", built: "Nov 15 2026 18:00:00", idf: "v5.5.1", chip: "ESP32-P4 rev v1.3", cores: 2, mac: "00:00:00:00:00:00", ssid: "stadiacast-dongle", channel: 6, audio: true, modes: MODES }); sendSettings(); }
       else if (cmd === "get") sendSettings();
       else if (cmd === "set") { const n = +v; if (k === "mode") st.mode = n; else if (k === "gain") st.gain = n; else if (k === "complexity") st.complexity = n; else if (k === "bitrate") st.bitrate = n; else if (k === "mic") st.mic = !!n; else if (k === "ptt") st.ptt = !!n; else if (k === "rumble") { st.rumble = !!n; if (!n) { clearTimeout(rmbTimer); rmbOut(0, 0, false); } } else if (k === "rumble_left") st.rumble_left = n; else if (k === "rumble_right") st.rumble_right = n; emit({ t: "ok", key: k }); sendSettings(); }
       else if (cmd === "rumble") {
@@ -927,6 +1140,24 @@ function demoLink() {
       else if (cmd === "logs") { st.logs = k === "on"; sendSettings(); }
       else if (cmd === "defaults") { Object.assign(st, { gain: 0, complexity: 8, bitrate: 96, mic: true, ptt: true, rumble: true, rumble_left: 100, rumble_right: 100 }); sendSettings(); }
       else if (cmd === "reboot") toast("The demo doesn't restart");
+      if (cmd === "hello") sendOta();
+    },
+    sendBytes(bytes) {
+      if (!img) return Promise.resolve();
+      img.at += bytes.length;
+      const at = img.at;
+      return new Promise((res) => setTimeout(() => {
+        emit({ t: "ota", state: "recv", at });
+        if (at >= img.size) {
+          const ver = "demo-update";
+          img = null;
+          emit({ t: "ota", state: "verifying" });
+          setTimeout(() => { emit({ t: "ota", state: "done", version: ver, slot: "ota_1", reconnect: true }); fw = ver; trial = true; }, 600);
+          setTimeout(() => this.send("hello"), 2500);
+          setTimeout(() => { trial = false; }, 9000);
+        }
+        res();
+      }, 25));
     },
     close() { clearInterval(timer); },
   };
@@ -934,6 +1165,7 @@ function demoLink() {
 
 /* ---- start ---- */
 $("btnConnect").onclick = connectClick;
+loadLatest();
 $("btnDisconnect").onclick = disconnectClick;
 if (DEMO) {
   document.title = "Stadiacast Dongle Console (demo)";
