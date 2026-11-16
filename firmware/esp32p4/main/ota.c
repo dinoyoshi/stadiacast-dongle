@@ -19,9 +19,11 @@
  * Stats pause; the gamepad and the headset keep going, apart from short stalls while flash is
  * written.
  *
- * Rollback (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE): a new image boots on trial. Once the host
- * has opened the USB device and the board has been up for TRIAL_S seconds, ota_confirm_task
- * keeps it. If it crashes or is reset before that, the bootloader goes back to the old one.
+ * Rollback (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE): a new image boots on trial. If the
+ * controller's servers did not start (stadia_start), it goes straight back to the old one. Once
+ * the host has opened the USB device and the board has been up for TRIAL_S seconds,
+ * ota_confirm_task keeps it. If it crashes or is reset before that, the bootloader goes back to
+ * the old one.
  */
 #include "dongle.h"
 
@@ -224,11 +226,19 @@ static void ota_confirm_task(void *arg)
     vTaskDelete(NULL);
 }
 
-void ota_confirm_when_up(void)
+void ota_confirm_when_up(bool servers_up)
 {
     const esp_partition_t *run = esp_ota_get_running_partition();
     esp_ota_img_states_t st;
     if (!run || esp_ota_get_state_partition(run, &st) != ESP_OK || st != ESP_OTA_IMG_PENDING_VERIFY) return;
+    if (!servers_up) {
+        /* boots, but the controller could never connect: no reason to keep it */
+        ESP_LOGE(TAG, "new firmware in %s on trial, but a server did not start: going back to the old one",
+                 run->label);
+        vTaskDelay(pdMS_TO_TICKS(500)); /* let the log out */
+        esp_ota_mark_app_invalid_rollback_and_reboot();
+        return; /* only when there is nothing to go back to */
+    }
     ESP_LOGI(TAG, "new firmware on trial in %s: kept once USB is up for %d s, rolled back if it restarts first",
              run->label, TRIAL_S);
     if (xTaskCreate(ota_confirm_task, "ota_ok", 3072, NULL, 1, NULL) != pdPASS) {

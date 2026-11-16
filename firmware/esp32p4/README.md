@@ -206,7 +206,7 @@ The **Update firmware** card installs new firmware over the same USB cable: no E
 esptool, no BOOT button.
 
 - **Install latest** takes the build that CI publishes next to the page
-  (`firmware/stadiacast-dongle.bin`, built from `main` with ESP-IDF 5.5.4 and the defaults in
+  (`firmware/stadiacast-dongle.bin`, built from `main` with ESP-IDF 5.5.6 and the defaults in
   `sdkconfig.defaults`). The card shows which version runs and which is published.
 - **Install a .bin file** takes your own build: `build/stadiacast_dongle.bin` (the app image,
   not the merged full-flash one).
@@ -215,7 +215,8 @@ It takes about half a minute. The image goes to the slot that isn't running, and
 switches once all of it is there, its SHA-256 matches, and ESP-IDF accepts it for this chip and
 revision; anything else leaves the old firmware running. The new firmware then starts **on
 trial**: it is kept once the computer has the dongle's USB up and 10 s have passed. If it
-crashes or restarts before that, the bootloader goes back to the old one by itself.
+crashes or restarts before that, the bootloader goes back to the old one by itself, and if the
+controller's servers don't start, the new firmware goes back to the old one at once.
 
 The published build uses the menuconfig defaults (hotspot name and password, LED pin and so on);
 the settings the console changes are in NVS and carry over. A board with a v3 P4 needs its own
