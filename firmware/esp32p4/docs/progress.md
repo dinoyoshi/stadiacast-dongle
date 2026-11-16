@@ -21,7 +21,7 @@ OTG port, as four kinds of controller, on Linux and Windows.
 | C6 ESP-Hosted update from the P4 | done | board: 2.12.11 to 2.13.1 |
 | Headset microphone (the controller's headset as the PC's USB microphone) | done | Linux (PipeWire): voice recorded, no clipping, 0 packets lost |
 | Push to talk on the Assistant button | done | board: sound 15-50 ms after the press, stops 0.3 s after release; headphone underruns about 0 per 10 s while the mic is idle |
-| Web console (live stats and settings over a USB serial port, Web Serial page on GitHub Pages) | built | firmware builds; page tested with its demo; board test pending |
+| Web console (live stats and settings over a USB serial port, Web Serial page on GitHub Pages) | done | board over USB on Linux (2026-11-16) |
 
 Test rig: FireBeetle 2 ESP32-P4 with a v1.3 P4, C6 on ESP-Hosted 2.13.1, a Stadia Controller on
 Wi-Fi firmware build 316382, a Linux PC and a Windows PC.
@@ -45,7 +45,8 @@ All merged into `main`.
 | #13 | Headset microphone | `DisplayToController` #5 true starts the controller's Opus mic stream (found by probing); UAC2 capture on iso IN 0x82 |
 | #14 | Push to talk on the Assistant button | #5 true on the press, #5 false 0.3 s after release; packets outside that are dropped |
 | #15 | Web console | CDC ACM serial port next to the gamepad in every mode; JSON lines with stats once a second; settings for mode, headphone gain, Opus complexity, mic, push to talk; static page in `console/`, deployed to GitHub Pages |
-| #16 | TLS and audio buffers in PSRAM, faster flash | `MBEDTLS_EXTERNAL_MEM_ALLOC` (boots and reaches ready on the board); audio rings and queues (about 55 KB) in PSRAM via `port_alloc_bulk()`, Opus state and audio stacks stay internal; flash at QIO 80 MHz instead of DIO 40 MHz (80 MHz needs minimum chip rev v1.0; boots on the board), aimed at the headphone underruns while the mic runs (board test pending). Running code from PSRAM (`SPIRAM_XIP_FROM_PSRAM`) was tried and dropped: it boot-loops a v1.3 P4 |
+| #16 | TLS and audio buffers in PSRAM, faster flash | `MBEDTLS_EXTERNAL_MEM_ALLOC` (boots and reaches ready on the board); audio rings and queues (about 55 KB) in PSRAM via `port_alloc_bulk()`, Opus state and audio stacks stay internal; flash at QIO 80 MHz instead of DIO 40 MHz (80 MHz needs minimum chip rev v1.0; boots on the board), aimed at the headphone underruns while the mic runs. Board-tested 2026-11-16: boots, and the mic works with Assistant held. Running code from PSRAM (`SPIRAM_XIP_FROM_PSRAM`) was tried and dropped: it boot-loops a v1.3 P4 |
+| #17 | Adjustable Opus bitrate | headphone stream bitrate 32-160 kbps (default 96, menuconfig `DONGLE_OPUS_BITRATE`), set from the web console or `set bitrate N`, saved in NVS, applied from the next 20 ms frame. Host-tested (48 kbps gives 121 B frames); board test pending |
 
 ## Things we learned the hard way
 

@@ -278,6 +278,11 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
             <div class="help">Lower costs less CPU per frame. Try 5 if the headphones crackle while the mic is on.</div>
           </div>
           <div class="setting">
+            <label for="setKbps">Opus bitrate</label>
+            <span><input type="range" id="setKbps" min="32" max="160" step="8"> <output id="outKbps"></output></span>
+            <div class="help">Headphone stream target. 64 kbps already sounds close to the source; 96 is the default. Barely changes CPU time.</div>
+          </div>
+          <div class="setting">
             <label for="setPtt">Push to talk</label>
             <label class="switch"><input type="checkbox" id="setPtt"><span></span></label>
             <div class="help">The mic only works while the Assistant button is held.</div>
@@ -537,7 +542,7 @@ MODES.forEach((name, i) => {
   modeSeg.appendChild(b);
 });
 let dragging = null;
-for (const [id, key, out, fmt] of [["setGain", "gain", "outGain", (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v) + " dB"], ["setCplx", "complexity", "outCplx", (v) => v]]) {
+for (const [id, key, out, fmt] of [["setGain", "gain", "outGain", (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v) + " dB"], ["setCplx", "complexity", "outCplx", (v) => v], ["setKbps", "bitrate", "outKbps", (v) => v + " kbps"]]) {
   const el = $(id);
   el.addEventListener("input", () => { dragging = id; $(out).textContent = fmt(+el.value); });
   el.addEventListener("change", () => { dragging = null; link?.send(`set ${key} ${el.value}`); });
@@ -546,13 +551,15 @@ for (const [id, key, out, fmt] of [["setGain", "gain", "outGain", (v) => (v > 0 
 $("setPtt").addEventListener("change", (e) => link?.send(`set ptt ${e.target.checked ? 1 : 0}`));
 $("setMic").addEventListener("change", (e) => link?.send(`set mic ${e.target.checked ? 1 : 0}`));
 $("btnReboot").onclick = () => link?.send("reboot");
-$("btnDefaults").onclick = () => { if (confirm("Reset the gain, Opus complexity, microphone and push to talk to their defaults?")) link?.send("defaults"); };
+$("btnDefaults").onclick = () => { if (confirm("Reset the gain, Opus complexity and bitrate, microphone and push to talk to their defaults?")) link?.send("defaults"); };
 
 function renderSettings() {
   [...modeSeg.children].forEach((b, i) => b.setAttribute("aria-pressed", String(settings.mode === i)));
-  for (const [id, v] of [["setGain", settings.gain], ["setCplx", settings.complexity]]) {
+  for (const [id, v] of [["setGain", settings.gain], ["setCplx", settings.complexity], ["setKbps", settings.bitrate]]) {
     const el = $(id);
-    if (dragging !== id) { el.value = v; $(el._out).textContent = el._fmt(v); }
+    el.disabled = v == null; // older firmware has no such setting
+    if (v == null) $(el._out).textContent = "–";
+    else if (dragging !== id) { el.value = v; $(el._out).textContent = el._fmt(v); }
   }
   $("setPtt").checked = settings.ptt;
   $("setMic").checked = settings.mic;
@@ -649,7 +656,7 @@ function renderStats(m) {
   const fps = rate((s) => s.audio.sent);
   $("audRate").innerHTML = fps == null ? "–" : `${fps.toFixed(0)}/s <span class="sub">of 50</span>`;
   const kbps = rate((s) => s.audio.bytes);
-  $("audKbps").textContent = kbps == null ? "–" : (kbps * 8 / 1000).toFixed(0) + " kbps";
+  $("audKbps").innerHTML = (kbps == null ? "–" : (kbps * 8 / 1000).toFixed(0) + " kbps") + (a.kbps ? ` <span class="sub">target ${a.kbps}</span>` : "");
   const und = rate((s) => s.audio.under);
   const und10 = und == null ? null : Math.round(und * 10);
   $("audUnder").innerHTML = und10 == null ? "–" : `<span class="${und10 ? (und10 > 2 ? "bad-t" : "warn-t") : ""}">${und10} per 10 s</span> <span class="sub">${a.under} total</span>`;
@@ -745,7 +752,7 @@ $("logSave").onclick = () => {
 /* ---- demo: a pretend dongle, for a look without one ---- */
 const DEMO = new URLSearchParams(location.search).has("demo");
 function demoLink() {
-  const st = { mode: 0, gain: 0, complexity: 8, mic: true, mic_running: true, ptt: true, logs: false };
+  const st = { mode: 0, gain: 0, complexity: 8, bitrate: 96, mic: true, mic_running: true, ptt: true, logs: false };
   const c = { up: 734000, sent: 0, bytes: 0, under: 0, enc: 0, enc_us: 0, mpk: 0, mdec: 0, upk: 0, mupk: 0 };
   const emit = (o) => setTimeout(() => onLine(JSON.stringify(o)), 30);
   const sendSettings = () => emit({ t: "settings", ...st });
@@ -754,12 +761,12 @@ function demoLink() {
     tick++;
     c.up += 1000;
     const talk = tick % 12 < 4;
-    c.sent += 50; c.bytes += 50 * 240; c.enc += 50; c.enc_us += 50 * (st.complexity * 750 + Math.random() * 1500);
+    c.sent += 50; c.bytes += 50 * st.bitrate * 2.5; c.enc += 50; c.enc_us += 50 * (st.complexity * 750 + Math.random() * 1500);
     if (talk && Math.random() < 0.35) c.under += 1;
     if (talk || !st.ptt) { c.mpk += 50; c.mdec += 50; }
     emit({ t: "stats", up: c.up, cpu: [Math.round(38 + Math.random() * 10 + (talk ? 20 : 0)), Math.round(22 + Math.random() * 8)], heap: [61440 + Math.round(Math.random() * 900), 48210, 31.2e6],
       ctl: { state: "input", disp: true, game: true, rssi: Math.round(-52 - Math.random() * 6), sta: 1 },
-      audio: { route: true, cplx: st.complexity, enc: c.enc, sent: c.sent, lost: 0, trim: 2, under: c.under, resync: 0, bytes: c.bytes, enc_us: Math.round(c.enc_us), enc_max: 9800 },
+      audio: { route: true, cplx: st.complexity, kbps: st.bitrate, enc: c.enc, sent: c.sent, lost: 0, trim: 2, under: c.under, resync: 0, bytes: c.bytes, enc_us: Math.round(c.enc_us), enc_max: 9800 },
       mic: { pkts: c.mpk, muted: 0, dec: c.mdec, lost: 3, err: 0, drop: 0, peak: talk ? 4000 + Math.round(Math.random() * 9000) : 0, age: talk ? 10 : 9000, talk },
       usb: { mode: st.mode, mounted: true, play: true, rec: true, vol: [0, 0], mute: [false, false], pkts: tick * 8000, fail: 0, ovf: 0, mpkts: tick * 8000, munder: 1, mskip: 0, mdrop: 0, mbuf: 1900, cdrop: 0 } });
     if (tick % 2 === 0) emit({ t: "tasks", ms: 2000, list: [["audio", 312 + Math.round(Math.random() * 40), 6, 31000], ["rtc", 96, 5, 9100], ["mic", talk ? 180 : 4, 4, 30500], ["IDLE0", 420, 0, 800], ["IDLE1", 700, 0, 820], ["tiT", 38, 18, 2100], ["console", 6, 2, 3900], ["esp_timer", 9, 22, 2500], ["https", 2, 5, 5200], ["TinyUSB", 22, 5, 2600]] });
@@ -772,9 +779,9 @@ function demoLink() {
       const [cmd, k, v] = line.split(" ");
       if (cmd === "hello") { emit({ t: "info", fw: "demo", project: "stadiacast_dongle", built: "Nov 15 2026 18:00:00", idf: "v5.5.1", chip: "ESP32-P4 rev v1.3", cores: 2, mac: "00:00:00:00:00:00", ssid: "stadiacast-dongle", channel: 6, audio: true, modes: MODES }); sendSettings(); }
       else if (cmd === "get") sendSettings();
-      else if (cmd === "set") { const n = +v; if (k === "mode") st.mode = n; else if (k === "gain") st.gain = n; else if (k === "complexity") st.complexity = n; else if (k === "mic") st.mic = !!n; else if (k === "ptt") st.ptt = !!n; emit({ t: "ok", key: k }); sendSettings(); }
+      else if (cmd === "set") { const n = +v; if (k === "mode") st.mode = n; else if (k === "gain") st.gain = n; else if (k === "complexity") st.complexity = n; else if (k === "bitrate") st.bitrate = n; else if (k === "mic") st.mic = !!n; else if (k === "ptt") st.ptt = !!n; emit({ t: "ok", key: k }); sendSettings(); }
       else if (cmd === "logs") { st.logs = k === "on"; sendSettings(); }
-      else if (cmd === "defaults") { Object.assign(st, { gain: 0, complexity: 8, mic: true, ptt: true }); sendSettings(); }
+      else if (cmd === "defaults") { Object.assign(st, { gain: 0, complexity: 8, bitrate: 96, mic: true, ptt: true }); sendSettings(); }
       else if (cmd === "reboot") toast("The demo doesn't restart");
     },
     close() { clearInterval(timer); },

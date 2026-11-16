@@ -30,7 +30,7 @@ static const char *TAG = "audio";
 
 #define FRAME_SAMPLES 960 /* 20 ms at 48 kHz */
 #define CHANNELS 2
-#define BITRATE 96000
+#define BITRATE_KBPS 96 /* when the config gives none */
 #define PAYLOAD_TYPE 111
 #define MAX_OPUS 600
 #define QUEUE_LEN 6    /* 120 ms: past it the oldest frame goes, as in audio.py */
@@ -51,6 +51,7 @@ static struct {
     OpusEncoder *enc;
     bool enc_failed;
     int complexity;
+    int kbps;
     int16_t acc[FRAME_SAMPLES * CHANNELS];
     size_t nacc;
     uint32_t ts;
@@ -69,6 +70,7 @@ static struct {
     int64_t next_slot_us; /* the pacer's next send time, 0 = waiting for a first frame */
     /* from power-up, for the console (audio_get_stats) */
     volatile int want_complexity; /* 0: no change asked for */
+    volatile int want_kbps;       /* 0: no change asked for */
     uint32_t t_encoded, t_trimmed, t_enc_us_max; /* under port_lock */
     uint64_t t_bytes, t_enc_us;
     volatile uint32_t t_sent, t_dropped, t_underruns, t_resyncs; /* the rtc task's */
@@ -77,6 +79,7 @@ static struct {
 void audio_init(const stadia_config_t *cfg)
 {
     A.complexity = cfg->audio_complexity ? cfg->audio_complexity : 8;
+    A.kbps = cfg->audio_kbps ? cfg->audio_kbps : BITRATE_KBPS;
     if (!A.q) A.q = port_alloc_bulk(QUEUE_LEN * sizeof(frame_t));
     if (!A.q) {
         SLOGE(TAG, "no memory for the audio queue");
@@ -104,10 +107,10 @@ static bool encoder_ready(void)
         return false;
     }
     A.enc = enc;
-    opus_encoder_ctl(A.enc, OPUS_SET_BITRATE(BITRATE));
+    opus_encoder_ctl(A.enc, OPUS_SET_BITRATE(A.kbps * 1000));
     opus_encoder_ctl(A.enc, OPUS_SET_COMPLEXITY(A.complexity));
     SLOGI(TAG, "Opus %s: 48 kHz stereo, 20 ms, %d kbps, complexity %d, %d bytes of state", opus_get_version_string(),
-          BITRATE / 1000, A.complexity, opus_encoder_get_size(CHANNELS));
+          A.kbps, A.complexity, opus_encoder_get_size(CHANNELS));
     return true;
 }
 
@@ -131,6 +134,12 @@ static void encode_frame(void)
         A.complexity = want;
         opus_encoder_ctl(A.enc, OPUS_SET_COMPLEXITY(want));
         SLOGI(TAG, "Opus complexity %d", want);
+    }
+    int kbps = A.want_kbps;
+    if (kbps && kbps != A.kbps) {
+        A.kbps = kbps;
+        opus_encoder_ctl(A.enc, OPUS_SET_BITRATE(kbps * 1000));
+        SLOGI(TAG, "Opus bitrate %d kbps", kbps);
     }
     uint8_t out[MAX_OPUS];
     int n = opus_encode(A.enc, A.acc, FRAME_SAMPLES, out, sizeof(out));
@@ -293,10 +302,19 @@ void stadia_audio_set_complexity(int complexity)
     if (!A.enc) A.complexity = complexity; /* before the first frame: the encoder starts with it */
 }
 
+void stadia_audio_set_bitrate(int kbps)
+{
+    if (kbps < STADIA_AUDIO_KBPS_MIN) kbps = STADIA_AUDIO_KBPS_MIN;
+    if (kbps > STADIA_AUDIO_KBPS_MAX) kbps = STADIA_AUDIO_KBPS_MAX;
+    A.want_kbps = kbps;
+    if (!A.enc) A.kbps = kbps; /* before the first frame: the encoder starts with it */
+}
+
 void audio_get_stats(stadia_stats_t *st)
 {
     st->audio_route = A.route;
     st->audio_complexity = (uint8_t)(A.want_complexity ? A.want_complexity : A.complexity);
+    st->audio_kbps = (uint8_t)(A.want_kbps ? A.want_kbps : A.kbps);
     port_lock();
     st->audio_encoded = A.t_encoded;
     st->audio_trimmed = A.t_trimmed;

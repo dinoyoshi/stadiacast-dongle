@@ -34,6 +34,15 @@ config DONGLE_OPUS_COMPLEXITY
         Higher is better sound for more CPU time per 20 ms frame. The serial log prints the
         encode time every 10 s while audio plays.
 
+config DONGLE_OPUS_BITRATE
+    int "Opus bitrate (kbit/s)"
+    range 32 160
+    default 96
+    depends on DONGLE_USB_AUDIO
+    help
+        The headphone stream's target bitrate. 64 is already close to transparent for stereo
+        music; above 96 is hard to tell apart. The web console can change it at run time.
+
 config DONGLE_USB_MIC
     bool "Pass the controller's microphone to the USB headset"
     default y
