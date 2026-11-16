@@ -8,7 +8,8 @@
  * STADIA_AUDIO_KBPS=48 sets the Opus bitrate (default 96).
  * STADIA_MIC=1 also decodes what the controller sends as its microphone (run the fake
  * controller with --mic-echo: it sends the tone back) and prints the decoded tone's frequency.
- * STADIA_MIC_PTT=1 passes it only while Assistant is held (fake controller --talk SECONDS). */
+ * STADIA_MIC_PTT=1 passes it only while Assistant is held (fake controller --talk SECONDS).
+ * STADIA_STATS=1 prints the battery and link quality of stadia_get_stats() every second. */
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -108,8 +109,19 @@ int main(int argc, char **argv)
         pthread_create(&t, &attr, tone_thread, NULL);
     }
     fprintf(stderr, "stadia_host: ready\n");
+    bool stats = getenv("STADIA_STATS") != NULL;
+    long long next_stats = now_ms() + 1000;
     for (;;) {
         usleep(50 * 1000);
+        if (stats && now_ms() >= next_stats) {
+            next_stats += 1000;
+            stadia_stats_t st;
+            stadia_get_stats(&st);
+            fprintf(stderr, "stadia_host: stats state=%s battery=%d%% age=%ds ping_us=%d/%d pings=%u/%u input=%u gaps=%u repeats=%u\n",
+                    st.display_state, st.battery_pct, (int)st.battery_age_s, (int)st.ping_us[0], (int)st.ping_us[1],
+                    (unsigned)st.pings_answered, (unsigned)st.pings_sent, (unsigned)st.input_series,
+                    (unsigned)st.input_gaps, (unsigned)st.input_repeats);
+        }
         long long stop = atomic_load(&s_stop_at);
         if (stop && now_ms() >= stop) {
             atomic_store(&s_stop_at, 0);

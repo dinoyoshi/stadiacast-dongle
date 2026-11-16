@@ -6,18 +6,22 @@
  * To the host, one line each, only while the host has the port open:
  *   {"t":"info",...}      firmware, chip, hotspot; after "hello"
  *   {"t":"settings",...}  the settings; after "hello", "get" and every change
- *   {"t":"stats",...}     once a second: the controller session, headset audio, microphone, USB,
- *                         CPU per core and memory (counters from power-up: the page takes the
- *                         differences)
+ *   {"t":"stats",...}     once a second: the controller session (with its battery and the link
+ *                         quality: keepalive round trip, input series lost), headset audio,
+ *                         microphone, USB, CPU per core and memory (counters from power-up: the
+ *                         page takes the differences)
  *   {"t":"tasks",...}     every 2 s: each task's share of a core since the last one
  *   {"t":"pad",...}       the controller's input as the host gets it, at most 20 times a second
  *   {"t":"ok"|"err",...}  the answer to a command
  *   anything else         the firmware's log, while "logs on"
- * From the host, a line each: hello | get | set <key> <value> | defaults | logs on|off | reboot |
- *   ota [begin <size> <sha256>] (a firmware update: ota.c, which also sends {"t":"ota",...})
+ *   {"t":"rumble",...}    the motors' levels (0..65535) and the host's (0..255), when they change
+ * From the host, a line each: hello | get | set <key> <value> | defaults | logs on|off | reboot
+ *   | rumble <left 0-255> <right 0-255> [ms]  (a test: through the rumble settings, 1 s by
+ *   default, 5 s at most; "rumble 0 0" stops it)
+ *   | ota [begin <size> <sha256>]  (a firmware update: ota.c, which also sends {"t":"ota",...})
  *   keys: mode 0-3, gain -12..0 (dB before the Opus encoder), complexity 1-10,
  *   bitrate 32-160 (Opus kbit/s), mic 0/1 (after a
- *   restart), ptt 0/1 (push to talk)
+ *   restart), ptt 0/1 (push to talk), rumble 0/1, rumble_left and rumble_right 0-200 (% strength)
  *
  * The settings live in NVS ("console"), the mode where pad_mode.c keeps it. All of this costs the
  * board nothing while no one has the port open but a 100 ms wake-up of a low-priority task.
@@ -107,7 +111,14 @@ static void defaults(dongle_settings_t *s)
 #if CONFIG_DONGLE_MIC_PUSH_TO_TALK
         .ptt = true,
 #endif
+        .rumble = true,
+        .rumble_pct = {100, 100},
     };
+}
+
+static void apply_rumble(void)
+{
+    rumble_config(K.set.rumble, K.set.rumble_pct[0], K.set.rumble_pct[1]);
 }
 
 static void apply_gain(int gain_db)
@@ -129,6 +140,9 @@ void settings_load(dongle_settings_t *out)
             s.kbps = u8;
         if (nvs_get_u8(h, "mic", &u8) == ESP_OK) s.mic = u8 != 0;
         if (nvs_get_u8(h, "ptt", &u8) == ESP_OK) s.ptt = u8 != 0;
+        if (nvs_get_u8(h, "rmb", &u8) == ESP_OK) s.rumble = u8 != 0;
+        if (nvs_get_u8(h, "rmb_l", &u8) == ESP_OK && u8 <= RUMBLE_PCT_MAX) s.rumble_pct[0] = u8;
+        if (nvs_get_u8(h, "rmb_r", &u8) == ESP_OK && u8 <= RUMBLE_PCT_MAX) s.rumble_pct[1] = u8;
         nvs_close(h);
     }
 #if !CONFIG_DONGLE_USB_MIC
@@ -136,6 +150,7 @@ void settings_load(dongle_settings_t *out)
 #endif
     K.set = s;
     apply_gain(s.gain_db);
+    apply_rumble();
     *out = s;
 }
 
@@ -148,6 +163,9 @@ static void settings_save(void)
     nvs_set_u8(h, "kbps", K.set.kbps);
     nvs_set_u8(h, "mic", K.set.mic);
     nvs_set_u8(h, "ptt", K.set.ptt);
+    nvs_set_u8(h, "rmb", K.set.rumble);
+    nvs_set_u8(h, "rmb_l", K.set.rumble_pct[0]);
+    nvs_set_u8(h, "rmb_r", K.set.rumble_pct[1]);
     nvs_commit(h);
     nvs_close(h);
 }
@@ -182,10 +200,10 @@ static void sendf(const char *fmt, ...)
 static void send_settings(void)
 {
     sendf("{\"t\":\"settings\",\"mode\":%d,\"gain\":%d,\"complexity\":%d,\"bitrate\":%d,\"mic\":%s,\"mic_running\":%s,\"ptt\":%s,"
-          "\"logs\":%s}",
+          "\"rumble\":%s,\"rumble_left\":%d,\"rumble_right\":%d,\"logs\":%s}",
           (int)usb_pad_mode(), K.set.gain_db, K.set.complexity, K.set.kbps, K.set.mic ? "true" : "false",
           K.set.mic_running ? "true" : "false", stadia_mic_push_to_talk() ? "true" : "false",
-          K.logs ? "true" : "false");
+          K.set.rumble ? "true" : "false", K.set.rumble_pct[0], K.set.rumble_pct[1], K.logs ? "true" : "false");
 }
 
 static void send_info(void)
@@ -341,10 +359,15 @@ static void send_stats(void)
     stadia_get_stats(&s);
     usb_pad_audio_stats_t u;
     usb_pad_audio_stats(&u);
-    char rssi[8] = "null";
+    char rssi[12] = "null", bat[12] = "null", ping[2][12] = {"null", "null"};
     if (K.rssi_ok) snprintf(rssi, sizeof(rssi), "%d", K.rssi);
+    if (s.battery_pct >= 0) snprintf(bat, sizeof(bat), "%d", s.battery_pct);
+    for (int i = 0; i < 2; i++) {
+        if (s.ping_us[i] >= 0) snprintf(ping[i], sizeof(ping[i]), "%d", (int)s.ping_us[i]);
+    }
     sendf("{\"t\":\"stats\",\"up\":%lld,\"cpu\":[%d,%d],\"heap\":[%u,%u,%u],"
-          "\"ctl\":{\"state\":\"%s\",\"disp\":%s,\"game\":%s,\"rssi\":%s,\"sta\":%d},"
+          "\"ctl\":{\"state\":\"%s\",\"disp\":%s,\"game\":%s,\"rssi\":%s,\"sta\":%d,"
+          "\"bat\":%s,\"bat_age\":%d,\"ping\":[%s,%s],\"pings\":[%u,%u],\"in\":[%u,%u,%u]},"
           "\"audio\":{\"route\":%s,\"cplx\":%u,\"kbps\":%u,\"enc\":%u,\"sent\":%u,\"lost\":%u,\"trim\":%u,\"under\":%u,"
           "\"resync\":%u,\"bytes\":%llu,\"enc_us\":%llu,\"enc_max\":%u},"
           "\"mic\":{\"pkts\":%u,\"muted\":%u,\"dec\":%u,\"lost\":%u,\"err\":%u,\"drop\":%u,\"peak\":%d,\"age\":%d,"
@@ -356,6 +379,8 @@ static void send_stats(void)
           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
           (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), s.display_state ? s.display_state : "none",
           s.display_up ? "true" : "false", s.game_up ? "true" : "false", rssi, K.stations,
+          bat, (int)s.battery_age_s, ping[0], ping[1], (unsigned)s.pings_sent, (unsigned)s.pings_answered,
+          (unsigned)s.input_series, (unsigned)s.input_gaps, (unsigned)s.input_repeats,
           s.audio_route ? "true" : "false", s.audio_complexity, (unsigned)s.audio_kbps, (unsigned)s.audio_encoded, (unsigned)s.audio_sent,
           (unsigned)s.audio_not_sent, (unsigned)s.audio_trimmed, (unsigned)s.audio_underruns,
           (unsigned)s.audio_resyncs, (unsigned long long)s.audio_bytes, (unsigned long long)s.audio_enc_us,
@@ -407,12 +432,42 @@ static void cmd_set(const char *key, const char *val)
     } else if (!strcmp(key, "ptt")) {
         K.set.ptt = v != 0;
         stadia_mic_set_push_to_talk(K.set.ptt);
+    } else if (!strcmp(key, "rumble")) {
+        K.set.rumble = v != 0;
+        apply_rumble();
+    } else if (!strcmp(key, "rumble_left") || !strcmp(key, "rumble_right")) {
+        if (v < 0 || v > RUMBLE_PCT_MAX) { reply_err("rumble strength is 0-200 %"); return; }
+        K.set.rumble_pct[key[7] == 'r'] = (uint8_t)v;
+        apply_rumble();
     } else {
         { reply_err("unknown setting"); return; }
     }
     settings_save();
     sendf("{\"t\":\"ok\",\"key\":\"%s\"}", key);
     send_settings();
+}
+
+/* rumble <left> <right> [ms]: a test through the rumble settings */
+static void cmd_rumble(const char *l, const char *r, const char *ms)
+{
+    if (!l || !r) { reply_err("usage: rumble <left 0-255> <right 0-255> [ms]"); return; }
+    long lv = strtol(l, NULL, 10), rv = strtol(r, NULL, 10), t = ms ? strtol(ms, NULL, 10) : 1000;
+    if (lv < 0 || lv > 255 || rv < 0 || rv > 255) { reply_err("rumble levels are 0-255"); return; }
+    if (t < 50 || t > RUMBLE_TEST_MS_MAX) { reply_err("rumble test is 50-5000 ms"); return; }
+    const char *err = rumble_test((uint8_t)lv, (uint8_t)rv, (int)t);
+    if (err) { reply_err(err); return; }
+    sendf("{\"t\":\"ok\",\"key\":\"rumble\"}");
+}
+
+/* the motors' levels, when they change (at most every 50 ms, with the pad) */
+static void send_rumble(void)
+{
+    uint16_t out[2];
+    uint8_t host[2];
+    bool testing;
+    if (!rumble_levels(out, host, &testing)) return;
+    sendf("{\"t\":\"rumble\",\"out\":[%u,%u],\"host\":[%u,%u],\"test\":%s}", out[0], out[1], host[0], host[1],
+          testing ? "true" : "false");
 }
 
 static void handle(char *line)
@@ -438,6 +493,7 @@ static void handle(char *line)
         stadia_audio_set_complexity(K.set.complexity);
         stadia_audio_set_bitrate(K.set.kbps);
         stadia_mic_set_push_to_talk(K.set.ptt);
+        apply_rumble();
         settings_save();
         sendf("{\"t\":\"ok\",\"key\":\"defaults\"}");
         send_settings();
@@ -446,6 +502,8 @@ static void handle(char *line)
         K.logs = v && (!strcmp(v, "on") || !strcmp(v, "1"));
         sendf("{\"t\":\"ok\",\"key\":\"logs\"}");
         send_settings();
+    } else if (!strcmp(cmd, "rumble")) {
+        cmd_rumble(strtok_r(NULL, " \t", &save), strtok_r(NULL, " \t", &save), strtok_r(NULL, " \t", &save));
     } else if (!strcmp(cmd, "ota")) {
         static char none[1];
         ota_run(save ? save : none, sendf);
@@ -474,6 +532,7 @@ static void console_task(void *arg)
             continue;
         }
         send_pad();
+        send_rumble();
         int64_t now = esp_timer_get_time();
         if (now >= next_stats) {
             next_stats = now + 1000000;

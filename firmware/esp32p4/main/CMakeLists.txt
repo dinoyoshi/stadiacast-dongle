@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.c" "hotspot.c" "c6_update.c" "status_led.c" "pad_mode.c" "console.c" "ota.c"
+    SRCS "main.c" "hotspot.c" "c6_update.c" "status_led.c" "pad_mode.c" "console.c" "rumble.c" "ota.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES stadia usb_pad esp_wifi nvs_flash esp_netif esp_event lwip esp_partition bootloader_support
                   esp_app_format esp_driver_gpio esp_timer esp_hw_support freertos log app_update mbedtls

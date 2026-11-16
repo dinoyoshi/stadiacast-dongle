@@ -84,7 +84,7 @@ and the C6 firmware stay where they are. Delete an old `sdkconfig` first so the 
 | status LED GPIO (-1: none) | 3 |
 | USB serial console for the web console | on |
 
-The headphone gain, Opus complexity and bitrate, microphone and push to talk can also be changed at run time
+The headphone gain, Opus complexity and bitrate, microphone, push to talk and rumble can also be changed at run time
 from the web console (below); what it sets is saved on the board and wins over menuconfig.
 
 ## First-time controller setup
@@ -173,11 +173,26 @@ into the computer, open the console in Chrome or Edge (desktop) and press **Conn
 
 - Hosted: `https://dinoyoshi.github.io/stadiacast/` (once GitHub Pages is on, see below), or
   open `console/index.html` from a checkout. Add `?demo` to look around without a dongle.
-- Live: controller session and Wi-Fi signal, headphone frames, bitrate, underruns and encode
+- Live: controller session, its battery and connection quality (below), headphone frames, bitrate, underruns and encode
   time, microphone packets and level, CPU per core, each task's CPU share, free memory, the
   controller's input, and the firmware's log.
 - Settings: gamepad mode, headphone gain (-12 to 0 dB before the Opus encoder), Opus complexity,
   Opus bitrate (32 to 160 kbps), microphone (after a restart), push to talk; restart and reset buttons.
+- Rumble: on/off and a strength per motor (0 to 200%; 100% is what the game asks for, more lifts
+  weak rumble), the levels the motors get right now, and test buttons (left, right, both,
+  gentle, stop) that run the motors for a second through those settings.
+
+The controller card's **Battery** is the controller's own gauge. Its first reading arrives a few
+minutes after the controller connects and then once per percent it drops, so the page shows
+when the latest one came. The dongle keeps it across reconnects until it restarts.
+**Connection** grades the link Good, Fair or Poor by the worst of three figures:
+
+- Wi-Fi signal: the controller's RSSI at the hotspot (good from -60 dBm, fair from -72 dBm).
+- Round trip: the time the controller takes to answer the dongle's keepalive check, sent every
+  2.5 s on the game link (good up to 20 ms, fair up to 60 ms).
+- Input lost: the controller numbers its input packets, so a skipped number is a packet that
+  never arrived. Shown for the last minute (good under 1%, fair under 5%), with any keepalive
+  checks that went unanswered.
 
 The dongle carries a USB serial port for it in every mode (`/dev/ttyACM*` on Linux, a COM port
 on Windows, no driver needed). The page uses Web Serial, which Firefox and Safari don't have. On
@@ -210,7 +225,8 @@ build. The page only has the published build when it comes from GitHub Pages, no
 ### From a terminal
 
 The same port works from a terminal (`screen /dev/ttyACM0`): type `hello`, `get`,
-`set gain -3`, `set complexity 5`, `set bitrate 64`, `set mode 1`, `logs on`, `reboot`. The protocol is described
+`set gain -3`, `set complexity 5`, `set bitrate 64`, `set mode 1`, `set rumble 0`,
+`set rumble_left 150`, `rumble 255 255 1000` (a 1 s test, levels 0-255 per motor), `logs on`, `reboot`. The protocol is described
 at the top of `main/console.c` (and the firmware update's at the top of `main/ota.c`).
 
 GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Actions". The
@@ -381,6 +397,11 @@ and prints the tone it hears every 5 s (`microphone 5.0 s, 440 Hz, peak 8310`). 
 `STADIA_MIC_PTT=1` and `--talk 4` for push to talk: the fake controller holds Assistant for 4 s,
 and the host build should decode about 4.3 s of tone and log `push to talk: talking`, then
 `microphone off (DisplayToController #5 false) sent`.
+
+`STADIA_STATS=1` prints the battery and link figures of the web console every second. With
+`--game` the fake controller takes `--battery 0.76` (sends that gauge reading) and
+`--input-gap 3` (skips three input sequence numbers once): the host build should then show
+`battery=76%` and `gaps=3`.
 
 ### If the Wi-Fi doesn't come up
 

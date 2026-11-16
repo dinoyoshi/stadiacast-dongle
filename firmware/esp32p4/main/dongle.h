@@ -33,6 +33,8 @@ typedef struct {
     bool mic;           /* ask the controller for its microphone (from the next start) */
     bool ptt;           /* push to talk */
     bool mic_running;   /* what this start does (mic as it was at power-up) */
+    bool rumble;        /* rumble on/off */
+    uint8_t rumble_pct[2]; /* strength per motor (left, right), 0..RUMBLE_PCT_MAX % */
 } dongle_settings_t;
 /* The saved settings (Kconfig's where none are saved). Before usb_pad_start and stadia_start. */
 void settings_load(dongle_settings_t *out);
@@ -45,6 +47,21 @@ void console_pad(const usb_pad_state_t *st);
 /* Change the gamepad mode as the combos do (saved, the board leaves the bus and comes back).
  * False while a change is under way. */
 bool pad_mode_request(usb_pad_mode_t mode);
+
+/* Rumble (rumble.c): the host's levels to the controller's motors through the console's
+ * settings, and the console's test. rumble_init() before settings_load(). */
+#define RUMBLE_PCT_MAX 200
+#define RUMBLE_TEST_MS_MAX 5000
+void rumble_init(void);
+void rumble_config(bool on, uint8_t left_pct, uint8_t right_pct);
+/* The host's levels, 0..255 (large = left motor). From the USB task. */
+void rumble_host(uint8_t large, uint8_t small);
+/* Run both motors at host-scale levels (0..255, through the settings) for ms, then back to the
+ * host's levels; 0, 0 stops a test. NULL when it started, else why not. */
+const char *rumble_test(uint8_t left, uint8_t right, int ms);
+/* What the motors get (0..65535), what the host asks for, and whether a test runs; true when
+ * the motors' levels changed since the last call. */
+bool rumble_levels(uint16_t out[2], uint8_t host[2], bool *testing);
 
 /* Firmware updates over the console (ota.c). ota_run() handles the console's "ota" command: a
  * whole update, after which the board restarts (it returns only when the update failed).

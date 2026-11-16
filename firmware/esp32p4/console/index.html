@@ -111,6 +111,9 @@ dl.kv dt { color: var(--text-2); }
 dl.kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weight: 550; min-width: 0; overflow-wrap: anywhere; }
 dl.kv dd .sub { color: var(--text-3); font-weight: 400; }
 .good-t { color: var(--good); } .warn-t { color: var(--warn); } .bad-t { color: var(--bad); }
+.batt { display: inline-block; width: 26px; height: 11px; border: 1.5px solid currentColor; border-radius: 3px; padding: 1px; vertical-align: -1px; margin-right: 6px; position: relative; }
+.batt::after { content: ""; position: absolute; right: -4px; top: 2.5px; width: 2px; height: 4px; background: currentColor; border-radius: 0 1px 1px 0; }
+.batt i { display: block; height: 100%; background: currentColor; border-radius: 1px; }
 .spark { margin-top: 12px; }
 .spark .lbl { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); }
 .spark .lbl b { color: var(--text); font-variant-numeric: tabular-nums; }
@@ -175,6 +178,9 @@ pre.log {
 }
 .toast.show { opacity: 1; }
 details summary { cursor: pointer; color: var(--text-2); }
+.motors { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; align-items: center; font-size: 12.5px; color: var(--text-2); }
+.motors .trig i { transition: width .08s; }
+.motors b { font-variant-numeric: tabular-nums; color: var(--text); min-width: 40px; text-align: right; }
 code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 @media (max-width: 520px) {
   .grid { grid-template-columns: 1fr; }
@@ -216,10 +222,15 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
         <dl class="kv">
           <dt>Session</dt><dd id="ctlState">–</dd>
           <dt>Game link</dt><dd id="ctlGame">–</dd>
+          <dt>Battery</dt><dd id="ctlBat">–</dd>
+          <dt>Connection</dt><dd id="ctlQual">–</dd>
           <dt>Wi-Fi signal</dt><dd id="ctlRssi">–</dd>
+          <dt>Round trip</dt><dd id="ctlPing">–</dd>
+          <dt>Input lost</dt><dd id="ctlLoss">–</dd>
           <dt>Hotspot</dt><dd id="ctlSsid">–</dd>
         </dl>
         <div class="spark" id="spRssi"></div>
+        <div class="spark" id="spPing"></div>
       </section>
 
       <section class="card">
@@ -326,6 +337,41 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
         </div>
       </section>
 
+      <section class="card" id="rumbleCard">
+        <h2>Rumble <span id="rmbPill" class="pill">–</span></h2>
+        <div class="settings">
+          <div class="setting">
+            <label for="setRmb">Rumble</label>
+            <label class="switch"><input type="checkbox" id="setRmb"><span></span></label>
+            <div class="help">Off keeps the controller's motors still whatever the game asks. Saved.</div>
+          </div>
+          <div class="setting">
+            <label for="setRmbL">Left motor</label>
+            <span><input type="range" id="setRmbL" min="0" max="200" step="5"> <output id="outRmbL"></output></span>
+          </div>
+          <div class="setting">
+            <label for="setRmbR">Right motor</label>
+            <span><input type="range" id="setRmbR" min="0" max="200" step="5"> <output id="outRmbR"></output></span>
+            <div class="help">Strength: 100% is what the game asks for. Above 100% lifts weak rumble (full stays full). Left is the big, low motor; right the small one.</div>
+          </div>
+          <div class="motors" aria-label="Motor levels sent to the controller">
+            <span>Left</span><div class="trig"><i id="rmbOutL"></i></div><b id="rmbValL">–</b>
+            <span>Right</span><div class="trig"><i id="rmbOutR"></i></div><b id="rmbValR">–</b>
+          </div>
+          <div class="setting stack">
+            <label>Test</label>
+            <div class="row">
+              <button data-rmb="255 0">Left</button>
+              <button data-rmb="0 255">Right</button>
+              <button data-rmb="255 255">Both</button>
+              <button data-rmb="96 96">Gentle</button>
+              <button data-rmb="0 0">Stop</button>
+            </div>
+            <div class="help">One second at the game's full level (Gentle: about a third), through the strength settings above. Needs the controller connected.</div>
+          </div>
+        </div>
+      </section>
+
       <section class="card">
         <h2>Live input</h2>
         <div class="pad">
@@ -381,7 +427,8 @@ let link = null;          // {send(line), close()}
 let wantConnected = false;
 let info = null, settings = null, prev = null, prevAt = 0;
 const HIST = 60;
-const hist = { rssi: [], under: [], peak: [], cpu0: [], cpu1: [] };
+const hist = { rssi: [], ping: [], under: [], peak: [], cpu0: [], cpu1: [] };
+const linkHist = []; // the link counters of each stats line, for the last minute's loss
 
 function toast(msg) {
   const t = $("toast");
@@ -509,6 +556,7 @@ function onOpened() {
   $("dash").hidden = false;
   prev = null;
   otaStatus = null;
+  linkHist.length = 0;
   link.send("hello");
   if ($("logOn").checked) link.send("logs on");
 }
@@ -547,6 +595,7 @@ function onLine(line) {
       case "tasks": renderTasks(m); break;
       case "pad": renderPad(m); break;
       case "ota": onOta(m); break;
+      case "rumble": renderRumble(m); break;
       case "ok": if (m.reconnect) { toast(m.key === "reboot" ? "Restarting…" : "Changing mode…"); } break;
       case "err": toast("Dongle: " + m.msg); break;
     }
@@ -585,7 +634,37 @@ for (const [id, key, out, fmt] of [["setGain", "gain", "outGain", (v) => (v > 0 
 $("setPtt").addEventListener("change", (e) => link?.send(`set ptt ${e.target.checked ? 1 : 0}`));
 $("setMic").addEventListener("change", (e) => link?.send(`set mic ${e.target.checked ? 1 : 0}`));
 $("btnReboot").onclick = () => link?.send("reboot");
-$("btnDefaults").onclick = () => { if (confirm("Reset the gain, Opus complexity and bitrate, microphone and push to talk to their defaults?")) link?.send("defaults"); };
+$("btnDefaults").onclick = () => { if (confirm("Reset the gain, Opus complexity and bitrate, microphone, push to talk and rumble to their defaults?")) link?.send("defaults"); };
+
+/* rumble: settings, the motors' levels, the test buttons */
+for (const [id, key, out] of [["setRmbL", "rumble_left", "outRmbL"], ["setRmbR", "rumble_right", "outRmbR"]]) {
+  const el = $(id);
+  el.addEventListener("input", () => { dragging = id; $(out).textContent = el.value + "%"; });
+  el.addEventListener("change", () => { dragging = null; link?.send(`set ${key} ${el.value}`); });
+}
+$("setRmb").addEventListener("change", (e) => link?.send(`set rumble ${e.target.checked ? 1 : 0}`));
+document.querySelectorAll("[data-rmb]").forEach((b) => { b.onclick = () => link?.send(`rumble ${b.dataset.rmb} 1000`); });
+function renderRumbleSettings() {
+  const known = settings.rumble != null; // older firmware: no rumble settings
+  $("rumbleCard").hidden = !known;
+  if (!known) return;
+  $("setRmb").checked = settings.rumble;
+  for (const [id, out, v] of [["setRmbL", "outRmbL", settings.rumble_left], ["setRmbR", "outRmbR", settings.rumble_right]]) {
+    if (dragging !== id) { $(id).value = v; $(out).textContent = v + "%"; }
+    $(id).disabled = !settings.rumble;
+  }
+  document.querySelectorAll("[data-rmb]").forEach((b) => { b.disabled = !settings.rumble; });
+  if (!rumbleState.test && !(rumbleState.out[0] || rumbleState.out[1])) pill($("rmbPill"), settings.rumble ? "Still" : "Off", "");
+}
+const rumbleState = { out: [0, 0], test: false };
+function renderRumble(m) {
+  Object.assign(rumbleState, m);
+  const pct = (v) => Math.round(v / 655.35);
+  $("rmbOutL").style.width = pct(m.out[0]) + "%"; $("rmbValL").textContent = pct(m.out[0]) + "%";
+  $("rmbOutR").style.width = pct(m.out[1]) + "%"; $("rmbValR").textContent = pct(m.out[1]) + "%";
+  const on = m.out[0] || m.out[1];
+  pill($("rmbPill"), m.test ? "Testing" : on ? "Game rumble" : settings?.rumble === false ? "Off" : "Still", on ? "good" : "");
+}
 
 function renderSettings() {
   [...modeSeg.children].forEach((b, i) => b.setAttribute("aria-pressed", String(settings.mode === i)));
@@ -601,6 +680,7 @@ function renderSettings() {
     ? "Ask the controller for its headset mic. Applies after a restart."
     : `Changed: restart the dongle to turn the mic ${settings.mic ? "on" : "off"}.`;
   $("logOn").checked = settings.logs;
+  renderRumbleSettings();
 }
 
 /* sparklines: one series each, hover for the value */
@@ -665,6 +745,55 @@ function sparkHover(host, e) {
 }
 function push(arr, v) { arr.push(v); if (arr.length > HIST) arr.shift(); }
 
+/* battery and connection quality (older firmware sends no such fields) */
+const grade = (v, good, fair, higherBetter) => v == null ? 0 :
+  higherBetter ? (v >= good ? 1 : v >= fair ? 2 : 3) : (v <= good ? 1 : v <= fair ? 2 : 3);
+const GRADE_CLS = ["", "good-t", "warn-t", "bad-t"];
+function fmtAgo(s) {
+  return s < 60 ? "just now" : s < 3600 ? Math.round(s / 60) + " min ago" : (s / 3600).toFixed(1) + " h ago";
+}
+function renderLink(c, up) {
+  const has = c.bat !== undefined;
+  // battery: the controller's first reading comes a few minutes after it connects
+  if (!has) $("ctlBat").innerHTML = '<span class="sub">update the firmware</span>';
+  else if (c.bat == null) $("ctlBat").innerHTML = `<span class="sub">${c.disp ? "first reading in a few minutes" : "–"}</span>`;
+  else {
+    const g = c.bat <= 15 ? 3 : c.bat <= 30 ? 2 : 1;
+    $("ctlBat").innerHTML = `<span class="${GRADE_CLS[g]}"><span class="batt"><i style="width:${Math.max(4, c.bat)}%"></i></span>${c.bat}%</span>` +
+      ` <span class="sub">${c.disp ? fmtAgo(c.bat_age) : "last seen " + fmtAgo(c.bat_age)}</span>`;
+  }
+  if (!has) { ["ctlQual", "ctlPing", "ctlLoss"].forEach((id) => ($(id).textContent = "–")); return; }
+
+  // round trip of the keepalive checks (every 2.5 s per link): the game link's, else the display's
+  const us = c.ping[1] ?? c.ping[0];
+  const ms = us == null ? null : us / 1000;
+  const gPing = grade(ms, 20, 60);
+  $("ctlPing").innerHTML = ms == null ? '<span class="sub">–</span>' :
+    `<span class="${GRADE_CLS[gPing]}">${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms</span>` +
+    (c.ping[0] != null && c.ping[1] != null ? ` <span class="sub">display ${(c.ping[0] / 1000).toFixed(0)} ms</span>` : "");
+  push(hist.ping, ms == null ? null : Math.round(ms * 10) / 10);
+  spark("spPing", "Round trip, last minute", hist.ping, " ms", { min: 0, minSpan: 20 });
+
+  // loss over the last minute: input series the controller numbered but never arrived, and
+  // keepalive checks without an answer
+  linkHist.push({ up, ps: c.pings[0], pa: c.pings[1], n: c.in[0], gap: c.in[1] });
+  while (linkHist.length > 1 && up - linkHist[0].up > 60000) linkHist.shift();
+  const a = linkHist[0], b = linkHist[linkHist.length - 1];
+  const got = b.n - a.n, gaps = b.gap - a.gap, sent = b.ps - a.ps, unanswered = sent - (b.pa - a.pa);
+  const lossPct = got + gaps > 0 ? gaps / (got + gaps) * 100 : null;
+  const pingLoss = sent > 0 ? Math.max(0, unanswered) / sent * 100 : null;
+  const gLoss = Math.max(grade(lossPct, 1, 5), grade(pingLoss, 0, 20));
+  const lossTxt = lossPct == null ? "–" : (lossPct === 0 ? "0" : lossPct < 0.1 ? "<0.1" : lossPct.toFixed(1)) + "%";
+  $("ctlLoss").innerHTML = lossPct == null && pingLoss == null ? '<span class="sub">–</span>' :
+    `<span class="${GRADE_CLS[gLoss]}">${lossTxt}</span> <span class="sub">${gaps} of ${got + gaps} in the last minute` +
+    (unanswered > 0 ? ` · ${unanswered} of ${sent} pings lost` : "") + "</span>";
+
+  // one verdict: the worst of signal, round trip and loss
+  const live = c.disp || c.game;
+  const worst = live ? Math.max(grade(c.rssi, -60, -72, true), gPing, gLoss) : 0;
+  $("ctlQual").innerHTML = worst ? `<span class="${GRADE_CLS[worst]}">${["", "Good", "Fair", "Poor"][worst]}</span>` : '<span class="sub">–</span>';
+}
+
 function renderStats(m) {
   const now = performance.now();
   const dt = prev ? Math.max(0.2, (m.up - prev.up) / 1000) : null;
@@ -682,6 +811,7 @@ function renderStats(m) {
     `<span class="${rssi >= -60 ? "good-t" : rssi >= -72 ? "warn-t" : "bad-t"}">${rssi} dBm</span> <span class="sub">${rssi >= -60 ? "good" : rssi >= -72 ? "fair" : "weak"}</span>`;
   push(hist.rssi, rssi);
   spark("spRssi", "Signal, last minute", hist.rssi, " dBm", { min: -95, max: -30 });
+  renderLink(c, m.up);
 
   // headphones
   const a = m.audio, u = m.usb;
@@ -961,8 +1091,10 @@ $("fwFile").addEventListener("change", async (e) => {
 /* ---- demo: a pretend dongle, for a look without one ---- */
 const DEMO = new URLSearchParams(location.search).has("demo");
 function demoLink() {
-  const st = { mode: 0, gain: 0, complexity: 8, bitrate: 96, mic: true, mic_running: true, ptt: true, logs: false };
-  const c = { up: 734000, sent: 0, bytes: 0, under: 0, enc: 0, enc_us: 0, mpk: 0, mdec: 0, upk: 0, mupk: 0 };
+  const st = { mode: 0, gain: 0, complexity: 8, bitrate: 96, mic: true, mic_running: true, ptt: true, rumble: true, rumble_left: 100, rumble_right: 100, logs: false };
+  let rmbTimer = null;
+  const rmbOut = (l, r, test) => emit({ t: "rumble", out: st.rumble ? [Math.min(65535, Math.round(l * 257 * st.rumble_left / 100)), Math.min(65535, Math.round(r * 257 * st.rumble_right / 100))] : [0, 0], host: [0, 0], test });
+  const c = { up: 734000, sent: 0, bytes: 0, under: 0, enc: 0, enc_us: 0, mpk: 0, mdec: 0, upk: 0, mupk: 0, pings: 0, ins: 0, gaps: 0 };
   const emit = (o) => setTimeout(() => onLine(JSON.stringify(o)), 30);
   const sendSettings = () => emit({ t: "settings", ...st });
   let tick = 0;
@@ -971,12 +1103,16 @@ function demoLink() {
   const timer = setInterval(() => {
     tick++;
     c.up += 1000;
+    if (tick % 5 === 0) c.pings += 2;
+    c.ins += 60 + Math.round(Math.random() * 60); if (Math.random() < 0.08) c.gaps += 1;
     const talk = tick % 12 < 4;
     c.sent += 50; c.bytes += 50 * st.bitrate * 2.5; c.enc += 50; c.enc_us += 50 * (st.complexity * 750 + Math.random() * 1500);
     if (talk && Math.random() < 0.35) c.under += 1;
     if (talk || !st.ptt) { c.mpk += 50; c.mdec += 50; }
     emit({ t: "stats", up: c.up, cpu: [Math.round(38 + Math.random() * 10 + (talk ? 20 : 0)), Math.round(22 + Math.random() * 8)], heap: [61440 + Math.round(Math.random() * 900), 48210, 31.2e6],
-      ctl: { state: "input", disp: true, game: true, rssi: Math.round(-52 - Math.random() * 6), sta: 1 },
+      ctl: { state: "input", disp: true, game: true, rssi: Math.round(-52 - Math.random() * 6), sta: 1,
+        bat: 76 - Math.floor(tick / 240), bat_age: 95 + tick % 240, ping: [3800 + Math.round(Math.random() * 4000), 3100 + Math.round(Math.random() * 5000)],
+        pings: [c.pings, c.pings], in: [c.ins, c.gaps, 0] },
       audio: { route: true, cplx: st.complexity, kbps: st.bitrate, enc: c.enc, sent: c.sent, lost: 0, trim: 2, under: c.under, resync: 0, bytes: c.bytes, enc_us: Math.round(c.enc_us), enc_max: 9800 },
       mic: { pkts: c.mpk, muted: 0, dec: c.mdec, lost: 3, err: 0, drop: 0, peak: talk ? 4000 + Math.round(Math.random() * 9000) : 0, age: talk ? 10 : 9000, talk },
       usb: { mode: st.mode, mounted: true, play: true, rec: true, vol: [0, 0], mute: [false, false], pkts: tick * 8000, fail: 0, ovf: 0, mpkts: tick * 8000, munder: 1, mskip: 0, mdrop: 0, mbuf: 1900, cdrop: 0 } });
@@ -992,9 +1128,17 @@ function demoLink() {
       else if (cmd === "ota") sendOta();
       else if (cmd === "hello") { emit({ t: "info", fw, project: "stadiacast_dongle", built: "Nov 15 2026 18:00:00", idf: "v5.5.1", chip: "ESP32-P4 rev v1.3", cores: 2, mac: "00:00:00:00:00:00", ssid: "stadiacast-dongle", channel: 6, audio: true, modes: MODES }); sendSettings(); }
       else if (cmd === "get") sendSettings();
-      else if (cmd === "set") { const n = +v; if (k === "mode") st.mode = n; else if (k === "gain") st.gain = n; else if (k === "complexity") st.complexity = n; else if (k === "bitrate") st.bitrate = n; else if (k === "mic") st.mic = !!n; else if (k === "ptt") st.ptt = !!n; emit({ t: "ok", key: k }); sendSettings(); }
+      else if (cmd === "set") { const n = +v; if (k === "mode") st.mode = n; else if (k === "gain") st.gain = n; else if (k === "complexity") st.complexity = n; else if (k === "bitrate") st.bitrate = n; else if (k === "mic") st.mic = !!n; else if (k === "ptt") st.ptt = !!n; else if (k === "rumble") { st.rumble = !!n; if (!n) { clearTimeout(rmbTimer); rmbOut(0, 0, false); } } else if (k === "rumble_left") st.rumble_left = n; else if (k === "rumble_right") st.rumble_right = n; emit({ t: "ok", key: k }); sendSettings(); }
+      else if (cmd === "rumble") {
+        if (!st.rumble) { emit({ t: "err", msg: "rumble is off" }); return; }
+        const [, l, r, ms] = line.split(" ").map(Number);
+        clearTimeout(rmbTimer);
+        rmbOut(l, r, !!(l || r));
+        if (l || r) rmbTimer = setTimeout(() => rmbOut(0, 0, false), ms || 1000);
+        emit({ t: "ok", key: "rumble" });
+      }
       else if (cmd === "logs") { st.logs = k === "on"; sendSettings(); }
-      else if (cmd === "defaults") { Object.assign(st, { gain: 0, complexity: 8, bitrate: 96, mic: true, ptt: true }); sendSettings(); }
+      else if (cmd === "defaults") { Object.assign(st, { gain: 0, complexity: 8, bitrate: 96, mic: true, ptt: true, rumble: true, rumble_left: 100, rumble_right: 100 }); sendSettings(); }
       else if (cmd === "reboot") toast("The demo doesn't restart");
       if (cmd === "hello") sendOta();
     },
