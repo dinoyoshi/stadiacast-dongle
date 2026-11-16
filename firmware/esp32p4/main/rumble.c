@@ -6,9 +6,11 @@
  * level * 257 * strength / 100, capped at 65535, so 100% is what the game asked for, below
  * that is gentler, and above that lifts weak rumble (a full-strength motor stays at full).
  * While a test runs it replaces the host's levels; when it ends the host's levels come back.
+ * Each player's gamepad has its own levels; the settings are for all, the test is player 1's.
  */
 #include "dongle.h"
 #include "stadia.h"
+#include "usb_pad.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -23,10 +25,10 @@ static struct {
     esp_timer_handle_t test_timer;
     bool on;
     uint8_t pct[2];   /* strength per motor, RUMBLE_PCT_MAX at most */
-    uint8_t host[2];  /* what the host asked for, 0..255 */
-    uint8_t test[2];  /* a test's levels, 0..255 */
+    uint8_t host[USB_PAD_MAX_PLAYERS][2]; /* what the host asked for per player, 0..255 */
+    uint8_t test[2];  /* a test's levels (player 1), 0..255 */
     bool testing;
-    uint16_t out[2];  /* what went to the controller */
+    uint16_t out[USB_PAD_MAX_PLAYERS][2]; /* what went to each controller */
     volatile bool changed;
 } R = {.on = true, .pct = {100, 100}};
 
@@ -37,22 +39,27 @@ static uint16_t scale(uint8_t level, uint8_t pct)
 }
 
 /* under the lock */
-static void apply(void)
+static void apply_player(int p)
 {
-    const uint8_t *lv = R.testing ? R.test : R.host;
+    const uint8_t *lv = R.testing && p == 0 ? R.test : R.host[p];
     uint16_t l = R.on ? scale(lv[0], R.pct[0]) : 0;
     uint16_t r = R.on ? scale(lv[1], R.pct[1]) : 0;
-    if (l == R.out[0] && r == R.out[1]) return;
-    R.out[0] = l, R.out[1] = r;
-    R.changed = true;
-    stadia_rumble(l, r);
+    if (l == R.out[p][0] && r == R.out[p][1]) return;
+    R.out[p][0] = l, R.out[p][1] = r;
+    if (p == 0) R.changed = true;
+    stadia_rumble(p, l, r);
+}
+
+static void apply(void)
+{
+    for (int p = 0; p < USB_PAD_MAX_PLAYERS; p++) apply_player(p);
 }
 
 static void test_end(void *arg)
 {
     xSemaphoreTake(R.lock, portMAX_DELAY);
     R.testing = false;
-    apply();
+    apply_player(0);
     xSemaphoreGive(R.lock);
 }
 
@@ -81,12 +88,12 @@ void rumble_config(bool on, uint8_t left_pct, uint8_t right_pct)
     xSemaphoreGive(R.lock);
 }
 
-void rumble_host(uint8_t large, uint8_t small)
+void rumble_host(int player, uint8_t large, uint8_t small)
 {
-    if (!R.lock) return;
+    if (!R.lock || player < 0 || player >= USB_PAD_MAX_PLAYERS) return;
     xSemaphoreTake(R.lock, portMAX_DELAY);
-    R.host[0] = large, R.host[1] = small;
-    apply();
+    R.host[player][0] = large, R.host[player][1] = small;
+    apply_player(player);
     xSemaphoreGive(R.lock);
 }
 
@@ -105,7 +112,7 @@ const char *rumble_test(uint8_t left, uint8_t right, int ms)
         R.test[0] = left, R.test[1] = right;
         R.testing = left || right;
         if (R.testing) esp_timer_start_once(R.test_timer, (uint64_t)ms * 1000);
-        apply();
+        apply_player(0);
     }
     xSemaphoreGive(R.lock);
     return err;
@@ -117,8 +124,8 @@ bool rumble_levels(uint16_t out[2], uint8_t host[2], bool *testing)
     xSemaphoreTake(R.lock, portMAX_DELAY);
     bool changed = R.changed;
     R.changed = false;
-    out[0] = R.out[0], out[1] = R.out[1];
-    host[0] = R.host[0], host[1] = R.host[1];
+    out[0] = R.out[0][0], out[1] = R.out[0][1];
+    host[0] = R.host[0][0], host[1] = R.host[0][1];
     *testing = R.testing;
     xSemaphoreGive(R.lock);
     return changed;

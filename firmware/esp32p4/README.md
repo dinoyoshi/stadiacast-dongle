@@ -22,6 +22,8 @@ is in [docs/progress.md](docs/progress.md).
 | Runs from the OTG USB-C port alone, LED shows its state | tested on the board |
 | Updates the C6's ESP-Hosted firmware from the P4 | done once: 2.12.11 to 2.13.1 |
 | Headset microphone: the headset on the controller is the PC's USB microphone, push to talk on the Assistant button | tested on Linux (PipeWire) |
+| Several controllers at once (up to 4), one USB gamepad each in Xbox 360 and HID modes | tested on a PC with two fake controllers; board test pending |
+| Pairing a controller from the web console over the board's own Bluetooth, no PC tools | built; board test pending |
 
 The controller needs its **Wi-Fi firmware** (ours runs build 316382; the Python receiver is
 tested with `ota.282115`). See [Known limits](#known-limits) for what is rough.
@@ -90,7 +92,19 @@ from the web console (below); what it sets is saved on the board and wins over m
 ## First-time controller setup
 
 The controller remembers one Wi-Fi network, and it learns it over Bluetooth in its setup mode.
-That happens once, from any PC with Bluetooth, with the Python package's provisioning tool:
+That happens once per controller. The dongle can do it itself, through the C6's Bluetooth radio:
+
+1. Put the controller in setup mode: turn it off (hold Stadia until the light goes out), then
+   hold Y and press Stadia. The light pulses orange. **This replaces the network the controller
+   knows**: afterwards it only joins the dongle (pair it again to change that).
+2. In the [web console](#web-console), Controllers card, press **Pair a controller** (or send
+   `pair` from a terminal). The dongle finds the controller, reads its key, and gives it the
+   hotspot's name and password, encrypted for that controller. The card follows each step.
+3. The controller joins the hotspot. Its first start after setup never connects (the firmware
+   does that, see `docs/protocol.md` section 11): wait a minute, turn it off (hold Stadia 4 s) and
+   wake it. From then on it connects like any other wake.
+
+Or from any PC with Bluetooth, with the Python package's provisioning tool:
 
 ```sh
 pip install 'stadiacast[ble]'          # or a release executable of Stadiacast
@@ -116,6 +130,24 @@ Once flashed, the dongle needs only the **OTG USB-C port**.
 When the controller sleeps or its battery dies, the board closes the session after 10 s of
 silence and the gamepad goes back to neutral (LED back to slow blinking), so nothing stays held.
 Waking the controller again reconnects it.
+
+### Several controllers
+
+The dongle serves up to four controllers at once. Set how many in the web console's
+Controllers card (**Players at once**, or `set players N`), then restart the dongle. Every
+controller has to be set up for the dongle's hotspot (above).
+
+- Each controller gets a **player number** the first time it connects and keeps it, also
+  across restarts (saved on the board). A new controller takes a free number; if all are taken,
+  the one not heard from the longest. **Forget** in the console frees a number.
+- In Xbox 360 and HID modes the PC sees one gamepad per player (player 1 first), each with its
+  own rumble. DualShock 4 and Switch Pro modes stay one gamepad, player 1's: the others connect
+  but their input goes nowhere.
+- Headset audio and the microphone are player 1's. The mode combos (Stadia + A/B/X/Y) work on
+  player 1's controller.
+- The LED stays on while any controller is connected.
+- With more than one player in Xbox 360 mode the board uses the same USB ID as with the
+  headphones (1209:0001), so Windows gives each gamepad its own Xbox driver.
 
 ### Controller modes
 
@@ -178,6 +210,8 @@ into the computer, open the console in Chrome or Edge (desktop) and press **Conn
   controller's input, and the firmware's log.
 - Settings: gamepad mode, headphone gain (-12 to 0 dB before the Opus encoder), Opus complexity,
   Opus bitrate (32 to 160 kbps), microphone (after a restart), push to talk; restart and reset buttons.
+- Controllers: each player's controller (id, address, status, battery, round trip, input
+  lost), **Forget**, the number of players, and **Pair a controller** (above).
 - Rumble: on/off and a strength per motor (0 to 200%; 100% is what the game asks for, more lifts
   weak rumble), the levels the motors get right now, and test buttons (left, right, both,
   gentle, stop) that run the motors for a second through those settings.
@@ -243,7 +277,8 @@ GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Acti
 - The headset microphone is tested on Linux only. While it runs, the headphones' stream has a
   few more underruns (3 to 6 per 10 s instead of 0 to 1): the P4 is close to its limit encoding
   and decoding at once.
-- One controller at a time (the Python receiver handles several).
+- Several controllers are tested on a PC build only (two fake controllers), not yet with two
+  real controllers on the board. Pairing over the board's Bluetooth is untested on the board.
 - The controller needs its Wi-Fi firmware; a Bluetooth-mode controller has to be flashed back
   first ([docs/step1-baseline.md](docs/step1-baseline.md)).
 
@@ -398,6 +433,12 @@ and prints the tone it hears every 5 s (`microphone 5.0 s, 440 Hz, peak 8310`). 
 `STADIA_MIC_PTT=1` and `--talk 4` for push to talk: the fake controller holds Assistant for 4 s,
 and the host build should decode about 4.3 s of tone and log `push to talk: talking`, then
 `microphone off (DisplayToController #5 false) sent`.
+
+Several controllers: start the host build with `STADIA_PLAYERS=2` and run two fake controllers,
+each with its own `--device-id` (`--device-id ctl-one`, `--device-id ctl-two`). The host build
+prints each player once a second (`player 2 known=1 id=ctl-two ... state=input`), and pressing A
+on one rumbles only that one. `STADIA_KNOWN=ctl-two,ctl-one` gives the players remembered ids, as
+the board's NVS does: `ctl-one` then becomes player 2.
 
 `STADIA_STATS=1` prints the battery and link figures of the web console every second. With
 `--game` the fake controller takes `--battery 0.76` (sends that gauge reading) and

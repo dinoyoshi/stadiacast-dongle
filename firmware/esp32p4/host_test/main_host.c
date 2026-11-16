@@ -9,18 +9,23 @@
  * STADIA_MIC=1 also decodes what the controller sends as its microphone (run the fake
  * controller with --mic-echo: it sends the tone back) and prints the decoded tone's frequency.
  * STADIA_MIC_PTT=1 passes it only while Assistant is held (fake controller --talk SECONDS).
- * STADIA_STATS=1 prints the battery and link quality of stadia_get_stats() every second. */
+ * STADIA_STATS=1 prints the battery and link quality of stadia_get_stats() every second.
+ * STADIA_PLAYERS=2 serves two controllers at once (fake controllers with different
+ * --device-id); every second it prints each player's state (stadia_get_players), and pressing A
+ * rumbles only the controller it was pressed on. STADIA_KNOWN=id1,id2 are the ids players 1, 2
+ * had before. */
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "stadia.h"
 
-static atomic_llong s_stop_at; /* ms, 0 = none */
+static atomic_llong s_stop_at[STADIA_MAX_CONTROLLERS]; /* ms, 0 = none */
 
 static long long now_ms(void)
 {
@@ -29,17 +34,23 @@ static long long now_ms(void)
     return ts.tv_sec * 1000LL + ts.tv_nsec / 1000000;
 }
 
-static void on_pad(const stadia_pad_t *pad, void *arg)
+static void on_pad(int player, const stadia_pad_t *pad, void *arg)
 {
-    static bool a_was;
+    static bool a_was[STADIA_MAX_CONTROLLERS];
     bool a = pad->connected && (pad->buttons & STADIA_BTN_A);
-    if (a && !a_was) {
-        atomic_store(&s_stop_at, 0);
-        stadia_rumble(40000, 20000);
-    } else if (!a && a_was) {
-        atomic_store(&s_stop_at, now_ms() + 6000);
+    if (a && !a_was[player]) {
+        atomic_store(&s_stop_at[player], 0);
+        stadia_rumble(player, 40000, 20000);
+        fprintf(stderr, "stadia_host: player %d pressed A\n", player + 1);
+    } else if (!a && a_was[player]) {
+        atomic_store(&s_stop_at[player], now_ms() + 6000);
     }
-    a_was = a;
+    a_was[player] = a;
+}
+
+static void on_controller(int player, const char *device_id, void *arg)
+{
+    fprintf(stderr, "stadia_host: player %d is now \"%s\"\n", player + 1, device_id);
 }
 
 static void *tone_thread(void *arg)
@@ -95,7 +106,18 @@ int main(int argc, char **argv)
         .audio_kbps = getenv("STADIA_AUDIO_KBPS") ? (uint8_t)atoi(getenv("STADIA_AUDIO_KBPS")) : 0,
         .mic = getenv("STADIA_MIC") != NULL,
         .mic_push_to_talk = getenv("STADIA_MIC_PTT") != NULL,
+        .max_controllers = getenv("STADIA_PLAYERS") ? (uint8_t)atoi(getenv("STADIA_PLAYERS")) : 1,
     };
+    static char known[256];
+    if (getenv("STADIA_KNOWN")) {
+        snprintf(known, sizeof(known), "%s", getenv("STADIA_KNOWN"));
+        char *save = NULL;
+        int i = 0;
+        for (char *t = strtok_r(known, ",", &save); t && i < STADIA_MAX_CONTROLLERS; t = strtok_r(NULL, ",", &save)) {
+            cfg.known_ids[i++] = t;
+        }
+    }
+    stadia_set_controller_callback(on_controller, NULL);
     stadia_set_pad_callback(on_pad, NULL);
     stadia_set_mic_callback(on_mic, NULL);
     if (!stadia_start(&cfg)) {
@@ -110,7 +132,7 @@ int main(int argc, char **argv)
     }
     fprintf(stderr, "stadia_host: ready\n");
     bool stats = getenv("STADIA_STATS") != NULL;
-    long long next_stats = now_ms() + 1000;
+    long long next_stats = now_ms() + 1000, next_players = now_ms() + 1000;
     for (;;) {
         usleep(50 * 1000);
         if (stats && now_ms() >= next_stats) {
@@ -122,10 +144,22 @@ int main(int argc, char **argv)
                     (unsigned)st.pings_answered, (unsigned)st.pings_sent, (unsigned)st.input_series,
                     (unsigned)st.input_gaps, (unsigned)st.input_repeats);
         }
-        long long stop = atomic_load(&s_stop_at);
-        if (stop && now_ms() >= stop) {
-            atomic_store(&s_stop_at, 0);
-            stadia_rumble(0, 0);
+        if (cfg.max_controllers > 1 && now_ms() >= next_players) {
+            next_players += 1000;
+            stadia_player_t pl[STADIA_MAX_CONTROLLERS];
+            int n = stadia_get_players(pl, STADIA_MAX_CONTROLLERS);
+            for (int i = 0; i < n; i++) {
+                fprintf(stderr, "stadia_host: player %d known=%d id=%s ip=%s state=%s game=%d input=%u seen=%ds\n", i + 1,
+                        pl[i].known, pl[i].device_id, pl[i].ip, pl[i].display_state, pl[i].game_up,
+                        (unsigned)pl[i].input_series, (int)pl[i].seen_s);
+            }
+        }
+        for (int i = 0; i < STADIA_MAX_CONTROLLERS; i++) {
+            long long stop = atomic_load(&s_stop_at[i]);
+            if (stop && now_ms() >= stop) {
+                atomic_store(&s_stop_at[i], 0);
+                stadia_rumble(i, 0, 0);
+            }
         }
     }
 }

@@ -11,7 +11,8 @@
  *                         microphone, USB, CPU per core and memory (counters from power-up: the
  *                         page takes the differences)
  *   {"t":"tasks",...}     every 2 s: each task's share of a core since the last one
- *   {"t":"pad",...}       the controller's input as the host gets it, at most 20 times a second
+ *   {"t":"pad",...}       a controller's input as the host gets it ("p": its player, 0 = player 1),
+ *                         at most 20 times a second per player
  *   {"t":"ok"|"err",...}  the answer to a command
  *   anything else         the firmware's log, while "logs on"
  *   {"t":"rumble",...}    the motors' levels (0..65535) and the host's (0..255), when they change
@@ -19,9 +20,14 @@
  *   | rumble <left 0-255> <right 0-255> [ms]  (a test: through the rumble settings, 1 s by
  *   default, 5 s at most; "rumble 0 0" stops it)
  *   | ota [begin <size> <sha256>]  (a firmware update: ota.c, which also sends {"t":"ota",...})
+ *   | forget <player 1-4>  (that player number goes to the next new controller)
+ *   | pair [stop]  (give a controller in Bluetooth setup mode the hotspot: pair.c; progress comes
+ *     as {"t":"pair","state":...,"msg":...} whenever it changes)
  *   keys: mode 0-3, gain -12..0 (dB before the Opus encoder), complexity 1-10,
  *   bitrate 32-160 (Opus kbit/s), mic 0/1 (after a
- *   restart), ptt 0/1 (push to talk), rumble 0/1, rumble_left and rumble_right 0-200 (% strength)
+ *   restart), ptt 0/1 (push to talk), rumble 0/1, rumble_left and rumble_right 0-200 (% strength),
+ *   players 1-4 (controllers at once, after a restart)
+ * The stats carry "players": each player's controller (its id, address, link state, battery).
  *
  * The settings live in NVS ("console"), the mode where pad_mode.c keeps it. All of this costs the
  * board nothing while no one has the port open but a 100 ms wake-up of a low-priority task.
@@ -52,7 +58,7 @@
 
 static const char *TAG = "console";
 
-#define OUT_MAX 2048
+#define OUT_MAX 3072
 #define LOG_LINE 240
 #define MAX_TASKS 40
 #define PAD_MIN_US (50 * 1000)
@@ -77,11 +83,12 @@ static struct {
     volatile bool logs;
     SemaphoreHandle_t log_lock;
     char *log_buf;
-    /* the pad, from the link task */
+    /* the pads, from the link task */
     portMUX_TYPE pad_mux;
-    usb_pad_state_t pad;
-    volatile bool pad_new;
-    int64_t pad_sent_us;
+    usb_pad_state_t pad[STADIA_MAX_CONTROLLERS];
+    volatile uint32_t pad_new; /* one bit per player */
+    int64_t pad_sent_us[STADIA_MAX_CONTROLLERS];
+    int players, players_running; /* saved (next start), this start */
     /* CPU: the run time counters at the last snapshot */
     TaskStatus_t *tasks;
     struct prev_run {
@@ -200,10 +207,12 @@ static void sendf(const char *fmt, ...)
 static void send_settings(void)
 {
     sendf("{\"t\":\"settings\",\"mode\":%d,\"gain\":%d,\"complexity\":%d,\"bitrate\":%d,\"mic\":%s,\"mic_running\":%s,\"ptt\":%s,"
-          "\"rumble\":%s,\"rumble_left\":%d,\"rumble_right\":%d,\"logs\":%s}",
+          "\"rumble\":%s,\"rumble_left\":%d,\"rumble_right\":%d,\"logs\":%s,\"players\":%d,\"players_running\":%d,"
+          "\"usb_players\":%d}",
           (int)usb_pad_mode(), K.set.gain_db, K.set.complexity, K.set.kbps, K.set.mic ? "true" : "false",
           K.set.mic_running ? "true" : "false", stadia_mic_push_to_talk() ? "true" : "false",
-          K.set.rumble ? "true" : "false", K.set.rumble_pct[0], K.set.rumble_pct[1], K.logs ? "true" : "false");
+          K.set.rumble ? "true" : "false", K.set.rumble_pct[0], K.set.rumble_pct[1], K.logs ? "true" : "false",
+          K.players, K.players_running, usb_pad_players());
 }
 
 static void send_info(void)
@@ -252,27 +261,52 @@ static int log_vprintf(const char *fmt, va_list ap)
 
 /* ---- stats -------------------------------------------------------------------------- */
 
-void console_pad(const usb_pad_state_t *st)
+void console_pad(int player, const usb_pad_state_t *st)
 {
-    if (!K.started) return;
+    if (!K.started || player < 0 || player >= STADIA_MAX_CONTROLLERS) return;
     portENTER_CRITICAL(&K.pad_mux);
-    K.pad = *st;
-    K.pad_new = true;
+    K.pad[player] = *st;
+    K.pad_new |= 1u << player;
     portEXIT_CRITICAL(&K.pad_mux);
 }
 
 static void send_pad(void)
 {
     int64_t now = esp_timer_get_time();
-    if (!K.pad_new || now - K.pad_sent_us < PAD_MIN_US) return;
-    usb_pad_state_t p;
-    portENTER_CRITICAL(&K.pad_mux);
-    p = K.pad;
-    K.pad_new = false;
-    portEXIT_CRITICAL(&K.pad_mux);
-    K.pad_sent_us = now;
-    sendf("{\"t\":\"pad\",\"b\":%u,\"x\":%u,\"lt\":%u,\"rt\":%u,\"lx\":%d,\"ly\":%d,\"rx\":%d,\"ry\":%d}", p.buttons, p.extra,
-          p.lt, p.rt, p.lx, p.ly, p.rx, p.ry);
+    for (int i = 0; i < STADIA_MAX_CONTROLLERS; i++) {
+        if (!(K.pad_new & (1u << i)) || now - K.pad_sent_us[i] < PAD_MIN_US) continue;
+        usb_pad_state_t p;
+        portENTER_CRITICAL(&K.pad_mux);
+        p = K.pad[i];
+        K.pad_new &= ~(1u << i);
+        portEXIT_CRITICAL(&K.pad_mux);
+        K.pad_sent_us[i] = now;
+        sendf("{\"t\":\"pad\",\"p\":%d,\"b\":%u,\"x\":%u,\"lt\":%u,\"rt\":%u,\"lx\":%d,\"ly\":%d,\"rx\":%d,\"ry\":%d}", i,
+              p.buttons, p.extra, p.lt, p.rt, p.lx, p.ly, p.rx, p.ry);
+    }
+}
+
+/* Each player's controller, as one JSON array (into out, cap bytes); its length. */
+static int players_json(char *out, int cap)
+{
+    stadia_player_t pl[STADIA_MAX_CONTROLLERS];
+    int n = stadia_get_players(pl, STADIA_MAX_CONTROLLERS);
+    int len = snprintf(out, cap, "[");
+    for (int i = 0; i < n && len < cap - 200; i++) {
+        const stadia_player_t *p = &pl[i];
+        char bat[12] = "null", ping[12] = "null";
+        if (p->battery_pct >= 0) snprintf(bat, sizeof(bat), "%d", p->battery_pct);
+        if (p->ping_us >= 0) snprintf(ping, sizeof(ping), "%d", (int)p->ping_us);
+        len += snprintf(out + len, cap - len,
+                        "%s{\"known\":%s,\"id\":\"%s\",\"ip\":\"%s\",\"seen\":%d,\"state\":\"%s\",\"disp\":%s,\"game\":%s,"
+                        "\"bat\":%s,\"ping\":%s,\"in\":[%u,%u],\"usb\":%s}",
+                        i ? "," : "", p->known ? "true" : "false", p->device_id, p->ip, (int)p->seen_s,
+                        p->display_state ? p->display_state : "none", p->display_up ? "true" : "false",
+                        p->game_up ? "true" : "false", bat, ping, (unsigned)p->input_series, (unsigned)p->input_gaps,
+                        i < usb_pad_players() ? "true" : "false");
+    }
+    if (len < cap - 1) len += snprintf(out + len, cap - len, "]");
+    return len;
 }
 
 /* CPU per core from the idle tasks' run time, and each task's share, since the last call. */
@@ -365,7 +399,9 @@ static void send_stats(void)
     for (int i = 0; i < 2; i++) {
         if (s.ping_us[i] >= 0) snprintf(ping[i], sizeof(ping[i]), "%d", (int)s.ping_us[i]);
     }
-    sendf("{\"t\":\"stats\",\"up\":%lld,\"cpu\":[%d,%d],\"heap\":[%u,%u,%u],"
+    char players[1024];
+    players_json(players, sizeof(players));
+    sendf("{\"t\":\"stats\",\"up\":%lld,\"players\":%s,\"cpu\":[%d,%d],\"heap\":[%u,%u,%u],"
           "\"ctl\":{\"state\":\"%s\",\"disp\":%s,\"game\":%s,\"rssi\":%s,\"sta\":%d,"
           "\"bat\":%s,\"bat_age\":%d,\"ping\":[%s,%s],\"pings\":[%u,%u],\"in\":[%u,%u,%u]},"
           "\"audio\":{\"route\":%s,\"cplx\":%u,\"kbps\":%u,\"enc\":%u,\"sent\":%u,\"lost\":%u,\"trim\":%u,\"under\":%u,"
@@ -374,7 +410,7 @@ static void send_stats(void)
           "\"talk\":%s},"
           "\"usb\":{\"mode\":%d,\"mounted\":%s,\"play\":%s,\"rec\":%s,\"vol\":[%d,%d],\"mute\":[%s,%s],\"pkts\":%u,"
           "\"fail\":%u,\"ovf\":%u,\"mpkts\":%u,\"munder\":%u,\"mskip\":%u,\"mdrop\":%u,\"mbuf\":%u,\"cdrop\":%u}}",
-          (long long)(esp_timer_get_time() / 1000), K.cpu[0], K.cpu[1],
+          (long long)(esp_timer_get_time() / 1000), players, K.cpu[0], K.cpu[1],
           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
           (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), s.display_state ? s.display_state : "none",
@@ -411,6 +447,13 @@ static void cmd_set(const char *key, const char *val)
         sendf("{\"t\":\"ok\",\"key\":\"mode\",\"reconnect\":%s}", (usb_pad_mode_t)v != usb_pad_mode() ? "true" : "false");
         vTaskDelay(pdMS_TO_TICKS(50)); /* let the answer leave before the board leaves the bus */
         if (!pad_mode_request((usb_pad_mode_t)v)) { reply_err("busy changing modes"); return; }
+        return;
+    } else if (!strcmp(key, "players")) {
+        if (v < 1 || v > STADIA_MAX_CONTROLLERS) { reply_err("players is 1-4"); return; }
+        K.players = (int)v;
+        players_save_count(K.players); /* from the next start: the USB gamepads and the links are set up once */
+        sendf("{\"t\":\"ok\",\"key\":\"players\",\"restart\":%s}", K.players != K.players_running ? "true" : "false");
+        send_settings();
         return;
     } else if (!strcmp(key, "gain")) {
         if (v < -12 || v > 0) { reply_err("gain is -12..0 dB"); return; }
@@ -459,6 +502,25 @@ static void cmd_rumble(const char *l, const char *r, const char *ms)
     sendf("{\"t\":\"ok\",\"key\":\"rumble\"}");
 }
 
+/* the pairing's progress, when it changes */
+static void send_pair(bool always)
+{
+    static uint32_t gen;
+    pair_status_t p;
+    pair_get_status(&p);
+    if (!always && p.gen == gen) return;
+    gen = p.gen;
+    char msg[200];
+    size_t j = 0;
+    for (const char *c = p.msg; *c && j < sizeof(msg) - 2; c++) { /* JSON-safe */
+        if (*c == '"' || *c == '\\') msg[j++] = '\\';
+        msg[j++] = *c;
+    }
+    msg[j] = 0;
+    sendf("{\"t\":\"pair\",\"state\":\"%s\",\"busy\":%s,\"msg\":\"%s\",\"name\":\"%s\",\"rssi\":%d,\"setup\":%d}", p.state,
+          p.busy ? "true" : "false", msg, p.name, p.rssi, p.setup_state);
+}
+
 /* the motors' levels, when they change (at most every 50 ms, with the pad) */
 static void send_rumble(void)
 {
@@ -479,6 +541,7 @@ static void handle(char *line)
         send_info();
         send_settings();
         ota_send_status(sendf);
+        send_pair(true);
     } else if (!strcmp(cmd, "get")) {
         send_settings();
     } else if (!strcmp(cmd, "set")) {
@@ -507,6 +570,22 @@ static void handle(char *line)
     } else if (!strcmp(cmd, "ota")) {
         static char none[1];
         ota_run(save ? save : none, sendf);
+    } else if (!strcmp(cmd, "forget")) {
+        char *v = strtok_r(NULL, " \t", &save);
+        long n = v ? strtol(v, NULL, 10) : 0;
+        if (n < 1 || n > K.players_running) { reply_err("forget <player>: a player number of this start"); return; }
+        stadia_forget_player((int)n - 1);
+        sendf("{\"t\":\"ok\",\"key\":\"forget\"}");
+    } else if (!strcmp(cmd, "pair")) {
+        char *v = strtok_r(NULL, " \t", &save);
+        if (v && !strcmp(v, "stop")) {
+            pair_stop();
+            sendf("{\"t\":\"ok\",\"key\":\"pair\"}");
+            return;
+        }
+        const char *err = pair_start();
+        if (err) { reply_err(err); return; }
+        sendf("{\"t\":\"ok\",\"key\":\"pair\"}");
     } else if (!strcmp(cmd, "reboot")) {
         sendf("{\"t\":\"ok\",\"key\":\"reboot\",\"reconnect\":true}");
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -533,6 +612,7 @@ static void console_task(void *arg)
         }
         send_pad();
         send_rumble();
+        send_pair(false);
         int64_t now = esp_timer_get_time();
         if (now >= next_stats) {
             next_stats = now + 1000000;
@@ -543,9 +623,10 @@ static void console_task(void *arg)
     }
 }
 
-void console_start(bool mic_running)
+void console_start(bool mic_running, int players)
 {
     K.set.mic_running = mic_running;
+    K.players = K.players_running = players;
     K.out = malloc(OUT_MAX);
     K.log_buf = malloc(LOG_LINE);
     K.log_lock = xSemaphoreCreateMutex();
@@ -558,6 +639,7 @@ void console_start(bool mic_running)
         ESP_LOGE(TAG, "no memory for the console");
         return;
     }
+    pair_init();
     K.started = true;
     K.prev_vprintf = esp_log_set_vprintf(log_vprintf);
     /* low priority: stats wait for the audio */

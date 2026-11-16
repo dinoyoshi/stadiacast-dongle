@@ -70,10 +70,10 @@ static const uint8_t s_switch_desc[] = {
 
 static const pad_mode_info_t s_modes[USB_PAD_MODE_COUNT] = {
     /* bInterval: full speed in frames (1 ms), high speed as 2^(n-1) microframes (4 -> 1 ms, 6 -> 4 ms, 7 -> 8 ms) */
-    [USB_PAD_XINPUT] = {"Xbox 360", 0x045E, 0x028E, 0x0114, NULL, 0, 1, 4, false, true},
-    [USB_PAD_DS4] = {"DualShock 4", 0x054C, 0x09CC, 0x0100, s_ds4_desc, sizeof(s_ds4_desc), 4, 6, true, true},
-    [USB_PAD_SWITCH] = {"Switch Pro", 0x057E, 0x2009, 0x0200, s_switch_desc, sizeof(s_switch_desc), 8, 7, true, false},
-    [USB_PAD_HID] = {"HID gamepad", 0x303A, 0x4047, 0x0100, s_hid_desc, sizeof(s_hid_desc), 1, 4, false, true},
+    [USB_PAD_XINPUT] = {"Xbox 360", 0x045E, 0x028E, 0x0114, NULL, 0, 1, 4, false, true, true},
+    [USB_PAD_DS4] = {"DualShock 4", 0x054C, 0x09CC, 0x0100, s_ds4_desc, sizeof(s_ds4_desc), 4, 6, true, true, false},
+    [USB_PAD_SWITCH] = {"Switch Pro", 0x057E, 0x2009, 0x0200, s_switch_desc, sizeof(s_switch_desc), 8, 7, true, false, false},
+    [USB_PAD_HID] = {"HID gamepad", 0x303A, 0x4047, 0x0100, s_hid_desc, sizeof(s_hid_desc), 1, 4, false, true, true},
 };
 
 const pad_mode_info_t *pad_mode_info(usb_pad_mode_t mode)

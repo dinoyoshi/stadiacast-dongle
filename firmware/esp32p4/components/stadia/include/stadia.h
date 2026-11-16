@@ -8,6 +8,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define STADIA_MAX_CONTROLLERS 4
+#define STADIA_DEVICE_ID_MAX 48 /* the firmware's device ids have 47 characters at most */
+
 typedef struct {
     const char *advertise_ip; /* our address as the controller sees it, e.g. "192.168.4.1" (copied) */
     uint16_t https_port;      /* 443 */
@@ -22,6 +25,13 @@ typedef struct {
     bool allow_clearcut;      /* false (the live preset): refuse Clearcut with a TLS alert */
     bool mic;                 /* ask for the controller's microphone and decode it (needs audio) */
     bool mic_push_to_talk;    /* with mic: only while the Assistant button is held */
+    /* Several controllers at once: each one that registers gets a player number (0 = player 1)
+     * with its own display link and game session on UDP rtc_port + 2 * player and
+     * game_port + 2 * player. Headset audio and the microphone are player 1's only. */
+    uint8_t max_controllers;  /* 1..STADIA_MAX_CONTROLLERS; 0 = 1 */
+    /* The device id each player had before (as stadia_controller_cb_t reported it), so a
+     * controller gets its old player number back; NULL or "" for none. Copied. */
+    const char *known_ids[STADIA_MAX_CONTROLLERS];
 } stadia_config_t;
 
 /* Start every server in its own task. False if one could not start. */
@@ -59,13 +69,20 @@ typedef struct {
     bool connected; /* false: the controller went away (everything released) */
 } stadia_pad_t;
 
-/* Called from the link task on every input report (and with connected=false on a disconnect). */
-typedef void (*stadia_pad_cb_t)(const stadia_pad_t *pad, void *arg);
+/* Called from the link task on every input report of a player's controller (0 = player 1),
+ * and with connected=false on a disconnect. */
+typedef void (*stadia_pad_cb_t)(int player, const stadia_pad_t *pad, void *arg);
 void stadia_set_pad_callback(stadia_pad_cb_t cb, void *arg);
 
-/* Set the rumble motors (0..65535 each), held until changed. Thread-safe. Needs the game
+/* A controller the dongle had not seen took a player number (it replaced device_id's
+ * predecessor there, if any), or "" when the number was freed (stadia_forget_player). From the
+ * HTTPS task: keep it short (an NVS write is fine). */
+typedef void (*stadia_controller_cb_t)(int player, const char *device_id, void *arg);
+void stadia_set_controller_callback(stadia_controller_cb_t cb, void *arg);
+
+/* Set a player's rumble motors (0..65535 each), held until changed. Thread-safe. Needs the game
  * session: before it is up, the latest level is kept and sent once it connects. */
-void stadia_rumble(uint16_t left, uint16_t right);
+void stadia_rumble(int player, uint16_t left, uint16_t right);
 
 /* Headset audio: interleaved 48 kHz stereo PCM for the controller's headset jack, any number of
  * frames per call. Call it from one task, at the pace the audio plays: every 960 frames it
@@ -83,7 +100,25 @@ void stadia_set_mic_callback(stadia_mic_cb_t cb, void *arg);
 void stadia_mic_set_push_to_talk(bool on);
 bool stadia_mic_push_to_talk(void);
 
-/* What the controller session is doing, for the console. Counters run from power-up; the
+/* Each player's controller, for the console's list. */
+typedef struct {
+    bool known;                /* a controller holds this player number */
+    char device_id[STADIA_DEVICE_ID_MAX];
+    char ip[16];               /* where it last called from, "" before any */
+    int32_t seen_s;            /* since it last sent anything, -1 never */
+    const char *display_state; /* as in stadia_stats_t */
+    bool display_up, game_up;
+    int battery_pct;           /* -1 before any reading */
+    int32_t ping_us;           /* the display link's keepalive round trip, -1 none */
+    uint32_t input_series, input_gaps;
+} stadia_player_t;
+/* Fill out[0..max-1] (player 1 first); returns how many players this start has. */
+int stadia_get_players(stadia_player_t *out, int max);
+/* Free a player number: its controller's links close and the number goes to the next new
+ * controller (the controller itself gets a free number when it comes back). */
+void stadia_forget_player(int player);
+
+/* What player 1's controller session is doing, for the console. Counters run from power-up; the
  * maximum and the peak are since the previous call. */
 typedef struct {
     const char *display_state; /* none, dtls-connected, ..., ready, input */

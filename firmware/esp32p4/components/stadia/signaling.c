@@ -122,7 +122,8 @@ size_t signaling_build_candidate(uint16_t port, uint8_t *out, size_t cap)
     return c.overflow ? 0 : c.len;
 }
 
-size_t signaling_answer(const uint8_t *bundle, size_t len, remote_offer_t *remote, uint8_t *out, size_t out_cap)
+size_t signaling_answer(const uint8_t *bundle, size_t len, remote_offer_t *remote, uint16_t port, uint8_t *out,
+                        size_t out_cap)
 {
     memset(remote, 0, sizeof(*remote));
     pbf_t f, sdp = {0}, offer = {0};
@@ -148,7 +149,7 @@ size_t signaling_answer(const uint8_t *bundle, size_t len, remote_offer_t *remot
     const rtc_identity_t *id = rtc_identity();
     uint8_t ans_buf[1024], sdp_buf[1100], cand_buf[96], cmsg_buf[128];
     size_t alen = signaling_build_answer(&echo, id->ufrag, id->pwd, ans_buf, sizeof(ans_buf));
-    size_t clen = signaling_build_candidate(g_cfg.rtc_port, cand_buf, sizeof(cand_buf));
+    size_t clen = signaling_build_candidate(port, cand_buf, sizeof(cand_buf));
 
     pbw_t s = PBW(sdp_buf, sizeof(sdp_buf)); /* WebRtcSdp{SDP_ANSWER} */
     pbw_uint(&s, 1, SDP_ANSWER);
@@ -166,6 +167,6 @@ size_t signaling_answer(const uint8_t *bundle, size_t len, remote_offer_t *remot
         return 0;
     }
     SLOGI(TAG, "offer %s: raw_dtls=%d delayed_acks=%d, %d IPv4 candidate(s); answering with %s:%u", remote->session_id,
-          echo.raw_dtls, echo.delayed_acks, remote->candidates, g_cfg.advertise_ip, (unsigned)g_cfg.rtc_port);
+          echo.raw_dtls, echo.delayed_acks, remote->candidates, g_cfg.advertise_ip, (unsigned)port);
     return o.len;
 }

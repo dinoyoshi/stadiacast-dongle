@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esp_netif.h"
+#include "stadia.h"
 #include "usb_pad.h"
 
 /* Start the C6 hotspot the controller joins; returns the access point's netif. */
@@ -41,12 +42,37 @@ void settings_load(dongle_settings_t *out);
 /* The headphones' gain as Q15 (32768 = 0 dB), for the audio task. */
 int32_t console_gain_q15(void);
 /* The console task, after stadia_start (CONFIG_DONGLE_CONSOLE). */
-void console_start(bool mic_running);
-/* The input the host gets, for the console's live view. Any task. */
-void console_pad(const usb_pad_state_t *st);
+void console_start(bool mic_running, int players);
+/* The input a player's gamepad gets, for the console's live view. Any task. */
+void console_pad(int player, const usb_pad_state_t *st);
 /* Change the gamepad mode as the combos do (saved, the board leaves the bus and comes back).
  * False while a change is under way. */
 bool pad_mode_request(usb_pad_mode_t mode);
+
+/* Players (players.c): how many controllers the dongle serves at once (1..STADIA_MAX_CONTROLLERS,
+ * from the next start) and which controller each player number belongs to, kept in NVS
+ * ("players") so a controller keeps its number across restarts. */
+int players_load(const char *ids[STADIA_MAX_CONTROLLERS]); /* the count; ids point to static strings */
+void players_save_count(int n);
+/* stadia_controller_cb_t: a player number went to another controller (or was freed). */
+void players_on_controller(int player, const char *device_id, void *arg);
+
+/* Pairing (pair.c): give a controller in Bluetooth setup mode the hotspot's name and password
+ * through the C6's Bluetooth, as the Stadia app did. Runs in its own task; the console polls the
+ * status. */
+typedef struct {
+    const char *state; /* idle, starting, scanning, connecting, reading, sending, waiting, done, failed */
+    char msg[160];     /* what is going on, or why it failed, for a person */
+    char name[32];     /* the controller found, "" before one */
+    int rssi;
+    int setup_state;   /* the controller's last setup state byte, -1 none */
+    bool busy;
+    uint32_t gen;      /* changes whenever anything above does */
+} pair_status_t;
+bool pair_init(void);
+const char *pair_start(void); /* NULL when started, else why not */
+void pair_stop(void);
+void pair_get_status(pair_status_t *out);
 
 /* Rumble (rumble.c): the host's levels to the controller's motors through the console's
  * settings, and the console's test. rumble_init() before settings_load(). */
@@ -54,8 +80,8 @@ bool pad_mode_request(usb_pad_mode_t mode);
 #define RUMBLE_TEST_MS_MAX 5000
 void rumble_init(void);
 void rumble_config(bool on, uint8_t left_pct, uint8_t right_pct);
-/* The host's levels, 0..255 (large = left motor). From the USB task. */
-void rumble_host(uint8_t large, uint8_t small);
+/* A player's host levels, 0..255 (large = left motor). From the USB task. */
+void rumble_host(int player, uint8_t large, uint8_t small);
 /* Run both motors at host-scale levels (0..255, through the settings) for ms, then back to the
  * host's levels; 0, 0 stops a test. NULL when it started, else why not. */
 const char *rumble_test(uint8_t left, uint8_t right, int ms);

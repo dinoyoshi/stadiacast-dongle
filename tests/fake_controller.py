@@ -1035,6 +1035,8 @@ async def run_cli(args) -> int:
         game_mode=args.game > 0,
         game_framing=args.game_framing,
         haptics_watchdog=args.haptics_watchdog,
+        device_id=args.device_id,
+        cloud_device_id=f"{args.device_id}-cloud",
     )
     fc.mic_echo = args.mic_echo
     t0 = time.monotonic()
@@ -1206,4 +1208,9 @@ if __name__ == "__main__":
     )
     ap.add_argument("--battery", type=float, default=None, help="with --game: send this battery gauge (0.0 to 1.0)")
     ap.add_argument("--input-gap", type=int, default=0, help="with --game: skip this many input sequence numbers once")
+    ap.add_argument(
+        "--device-id",
+        default="fake-device",
+        help="the controller's device id: give each fake controller its own to run several at once",
+    )
     sys.exit(asyncio.run(run_cli(ap.parse_args())))
