@@ -1019,7 +1019,7 @@ $("logSave").onclick = () => {
   a.click();
 };
 
-/* ---- firmware update (main/ota.c): "ota begin <size> <sha256>", then the image as raw bytes,
+/* ---- firmware update (core/dongle/ota.c): "ota begin <size> <sha256>", then the image as raw bytes,
    never more than the board's window past its last "at" ---- */
 let otaStatus = null;   // the board's {"t":"ota","state":"idle",...}
 let latest = null;      // firmware/firmware.json, published with this page

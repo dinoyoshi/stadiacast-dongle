@@ -10,6 +10,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 
 struct port_event {
@@ -54,6 +55,11 @@ bool port_spawn(port_task_fn fn, void *arg, const char *name, int stack_bytes)
 bool port_spawn_low(port_task_fn fn, void *arg, const char *name, int stack_bytes)
 {
     return spawn(fn, arg, name, stack_bytes, 4);
+}
+
+bool port_spawn_prio(port_task_fn fn, void *arg, const char *name, int stack_bytes, int prio)
+{
+    return spawn(fn, arg, name, stack_bytes, prio);
 }
 
 int64_t port_now_ms(void)
@@ -183,6 +189,27 @@ bool port_timer_start_periodic(port_timer_t *t, int64_t us)
 void port_timer_stop(port_timer_t *t)
 {
     esp_timer_stop(t->h);
+}
+
+port_stream_t *port_stream_new(size_t size, bool bulk)
+{
+    return (port_stream_t *)(bulk ? xStreamBufferCreateWithCaps(size, 1, MALLOC_CAP_SPIRAM)
+                                  : xStreamBufferCreate(size, 1));
+}
+
+bool port_stream_send(port_stream_t *s, const void *data, size_t n)
+{
+    return xStreamBufferSend((StreamBufferHandle_t)s, data, n, 0) == n;
+}
+
+size_t port_stream_receive(port_stream_t *s, void *buf, size_t max, int timeout_ms)
+{
+    return xStreamBufferReceive((StreamBufferHandle_t)s, buf, max, pdMS_TO_TICKS(timeout_ms));
+}
+
+void port_stream_reset(port_stream_t *s)
+{
+    xStreamBufferReset((StreamBufferHandle_t)s);
 }
 
 void port_log(char level, const char *tag, const char *fmt, ...)

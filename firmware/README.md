@@ -15,8 +15,10 @@ firmware/
     gamepad/           the USB gamepad modes (descriptors, reports, the DS4's and Switch Pro's
                        USB protocols), one mode_<name>.c each
     dongle/            the dongle's own logic: input mapping, the mode combos and the board's
-                       button, rumble settings and test, players, status LED patterns; the
-                       board provides dongle_board.h (key/value store, LED, button, USB)
+                       button, rumble settings and test, players, status LED patterns, the
+                       web console's protocol and firmware updates over it; the board
+                       provides dongle_board.h (key/value store, LED, button, USB, the
+                       console link, stats, firmware slots)
     opus/              libopus 1.5.2 (git submodule), fixed point
   platform/
     port_api/          stadia_port.h: the OS services the core needs
@@ -25,7 +27,7 @@ firmware/
   host/                the core built for Linux and tested against tests/fake_controller.py
   esp32p4/             the FireBeetle 2 ESP32-P4: an ESP-IDF project with the board's own
                        code (C6 hotspot, TinyUSB on the P4's high-speed port, dongle_board.h
-                       on NVS and its GPIOs, console, OTA, NimBLE pairing) and the web
+                       on NVS, its GPIOs, USB serial and esp_ota, NimBLE pairing) and the web
                        console page (console/)
 ```
 
@@ -63,17 +65,21 @@ The `Firmware core on Linux` workflow runs all three on every pull request that 
 
 ## Adding a board
 
-Still in progress: the console and OTA protocols and pairing still live in `esp32p4/main/` and
-move into `core/` next. For now a new board needs:
+Still in progress: the pairing protocol still lives in `esp32p4/main/pair.c` and moves into
+`core/` next (a board without Bluetooth passes no pairing ops; the console then answers "this
+board has no pairing"). For now a new board needs:
 
 - an implementation of `platform/port_api/include/stadia_port.h` (or `port_esp_idf` on any
   ESP32, `port_posix` on Linux),
 - an implementation of `core/dongle/include/dongle_board.h`: a key/value store, the LED and
-  button (or none), and its USB device's mode and reports. On ESP-IDF it is a component named
+  button (or none), its USB device's mode and reports, a byte link for the web console (a USB
+  serial port, or none), board info and stats, and two firmware slots for updates (or
+  `board_fw_begin()` returning an error). On ESP-IDF it is a component named
   `dongle_board` (the ESP32-P4's is `esp32p4/components/dongle_board`),
 - a Wi-Fi access point the controller joins, with the board at a fixed address,
 - a USB device stack that sends the reports `core/gamepad` builds (on TinyUSB, the ESP32-P4's
   `esp32p4/components/usb_pad` is the model),
 - a start-up that calls `stadia_start()` and passes input (`dongle_pad_state()`,
   `pad_mode_filter()`), rumble (`rumble_host()`) and audio between the core and the USB side,
-  as `esp32p4/main/main.c` does.
+  as `esp32p4/main/main.c` does, plus `settings_load()` and `console_start()` for the web
+  console.
