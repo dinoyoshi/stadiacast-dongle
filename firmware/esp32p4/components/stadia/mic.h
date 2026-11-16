@@ -15,5 +15,8 @@ int64_t mic_last_packet_ms(void);
 void mic_set_talk(bool held);
 /* Held, or let go less than the tail ago: the microphone is wanted (push to talk). */
 bool mic_talking(void);
+/* The decoder has work: push to talk held, or speech (not just DTX) in the last 300 ms. The
+ * headphones' encoder lowers its complexity meanwhile (audio.c). */
+bool mic_busy(void);
 /* The microphone's part of stadia_get_stats(). */
 void mic_get_stats(stadia_stats_t *st);

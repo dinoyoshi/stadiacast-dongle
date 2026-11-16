@@ -148,6 +148,7 @@ void app_main(void)
         .start_game = true,
         .audio = audio,
         .audio_complexity = set.complexity,
+        .audio_mic_complexity = set.mic_complexity,
         .audio_kbps = set.kbps,
         .mic = audio && set.mic,
         .mic_push_to_talk = set.ptt, /* the console's settings, CONFIG_DONGLE_* until it changes them */

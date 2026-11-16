@@ -36,6 +36,8 @@ static const char *TAG = "mic";
 #define MAX_PLC 3 /* lost frames concealed on a gap; a longer one is just skipped */
 #define STATS_MS 10000
 #define TALK_TAIL_MS 300
+#define DTX_MAX 3 /* bytes: a DTX frame while nobody talks, cheap to decode */
+#define BUSY_MS 300
 
 typedef struct {
     uint16_t len;
@@ -51,6 +53,7 @@ static struct {
     int head, count;
     uint32_t queued[2], overflow;
     int64_t last_rx_ms; /* the last packet received, queued or not */
+    int64_t last_speech_ms; /* the last queued packet bigger than a DTX one */
     uint32_t muted;     /* packets dropped while not talking */
     uint32_t t_packets, t_muted, t_overflow; /* from power-up, for the console (mic_get_stats) */
     bool talk_held;
@@ -109,6 +112,7 @@ void mic_on_rtp(rtc_link_t *L, int link, const uint8_t *rtp, size_t n)
     p->link = (uint8_t)link;
     memcpy(p->data, payload, plen);
     M.count++;
+    if (plen > DTX_MAX) M.last_speech_ms = now;
     M.queued[link ? 1 : 0]++;
     M.t_packets++;
     port_unlock();
@@ -283,6 +287,16 @@ bool mic_talking(void)
     bool on = M.talk_held || (M.talk_released_ms && port_now_ms() - M.talk_released_ms < TALK_TAIL_MS);
     port_unlock();
     return on;
+}
+
+bool mic_busy(void)
+{
+    if (!M.q) return false;
+    int64_t now = port_now_ms();
+    port_lock();
+    bool busy = (g_cfg.mic_push_to_talk && M.talk_held) || (M.last_speech_ms && now - M.last_speech_ms < BUSY_MS);
+    port_unlock();
+    return busy;
 }
 
 bool mic_init(void)

@@ -24,7 +24,7 @@
  *   | pair [stop]  (give a controller in Bluetooth setup mode the hotspot: pair.c; progress comes
  *     as {"t":"pair","state":...,"msg":...} whenever it changes)
  *   keys: mode 0-3, gain -12..0 (dB before the Opus encoder), complexity 1-10,
- *   bitrate 32-160 (Opus kbit/s), mic 0/1 (after a
+ *   mic_complexity 1-10 (the complexity while the mic runs, when lower), bitrate 32-160 (Opus kbit/s), mic 0/1 (after a
  *   restart), ptt 0/1 (push to talk), rumble 0/1, rumble_left and rumble_right 0-200 (% strength),
  *   players 1-4 (controllers at once, after a restart)
  * The stats carry "players": each player's controller (its id, address, link state, battery).
@@ -69,6 +69,9 @@ static const char *TAG = "console";
 #ifndef CONFIG_DONGLE_OPUS_COMPLEXITY
 #define CONFIG_DONGLE_OPUS_COMPLEXITY 8
 #endif
+#ifndef CONFIG_DONGLE_OPUS_MIC_COMPLEXITY
+#define CONFIG_DONGLE_OPUS_MIC_COMPLEXITY 4
+#endif
 #ifndef CONFIG_DONGLE_OPUS_BITRATE
 #define CONFIG_DONGLE_OPUS_BITRATE 96
 #endif
@@ -111,6 +114,7 @@ static void defaults(dongle_settings_t *s)
     *s = (dongle_settings_t){
         .gain_db = 0,
         .complexity = CONFIG_DONGLE_OPUS_COMPLEXITY,
+        .mic_complexity = CONFIG_DONGLE_OPUS_MIC_COMPLEXITY,
         .kbps = CONFIG_DONGLE_OPUS_BITRATE,
 #if CONFIG_DONGLE_USB_MIC
         .mic = true,
@@ -143,6 +147,7 @@ void settings_load(dongle_settings_t *out)
         uint8_t u8;
         if (nvs_get_i8(h, "gain", &i8) == ESP_OK && i8 >= -12 && i8 <= 0) s.gain_db = i8;
         if (nvs_get_u8(h, "cplx", &u8) == ESP_OK && u8 >= 1 && u8 <= 10) s.complexity = u8;
+        if (nvs_get_u8(h, "mcplx", &u8) == ESP_OK && u8 >= 1 && u8 <= 10) s.mic_complexity = u8;
         if (nvs_get_u8(h, "kbps", &u8) == ESP_OK && u8 >= STADIA_AUDIO_KBPS_MIN && u8 <= STADIA_AUDIO_KBPS_MAX)
             s.kbps = u8;
         if (nvs_get_u8(h, "mic", &u8) == ESP_OK) s.mic = u8 != 0;
@@ -167,6 +172,7 @@ static void settings_save(void)
     if (nvs_open("console", NVS_READWRITE, &h) != ESP_OK) return;
     nvs_set_i8(h, "gain", K.set.gain_db);
     nvs_set_u8(h, "cplx", K.set.complexity);
+    nvs_set_u8(h, "mcplx", K.set.mic_complexity);
     nvs_set_u8(h, "kbps", K.set.kbps);
     nvs_set_u8(h, "mic", K.set.mic);
     nvs_set_u8(h, "ptt", K.set.ptt);
@@ -206,10 +212,10 @@ static void sendf(const char *fmt, ...)
 
 static void send_settings(void)
 {
-    sendf("{\"t\":\"settings\",\"mode\":%d,\"gain\":%d,\"complexity\":%d,\"bitrate\":%d,\"mic\":%s,\"mic_running\":%s,\"ptt\":%s,"
+    sendf("{\"t\":\"settings\",\"mode\":%d,\"gain\":%d,\"complexity\":%d,\"mic_complexity\":%d,\"bitrate\":%d,\"mic\":%s,\"mic_running\":%s,\"ptt\":%s,"
           "\"rumble\":%s,\"rumble_left\":%d,\"rumble_right\":%d,\"logs\":%s,\"players\":%d,\"players_running\":%d,"
           "\"usb_players\":%d}",
-          (int)usb_pad_mode(), K.set.gain_db, K.set.complexity, K.set.kbps, K.set.mic ? "true" : "false",
+          (int)usb_pad_mode(), K.set.gain_db, K.set.complexity, K.set.mic_complexity, K.set.kbps, K.set.mic ? "true" : "false",
           K.set.mic_running ? "true" : "false", stadia_mic_push_to_talk() ? "true" : "false",
           K.set.rumble ? "true" : "false", K.set.rumble_pct[0], K.set.rumble_pct[1], K.logs ? "true" : "false",
           K.players, K.players_running, usb_pad_players());
@@ -404,7 +410,7 @@ static void send_stats(void)
     sendf("{\"t\":\"stats\",\"up\":%lld,\"players\":%s,\"cpu\":[%d,%d],\"heap\":[%u,%u,%u],"
           "\"ctl\":{\"state\":\"%s\",\"disp\":%s,\"game\":%s,\"rssi\":%s,\"sta\":%d,"
           "\"bat\":%s,\"bat_age\":%d,\"ping\":[%s,%s],\"pings\":[%u,%u],\"in\":[%u,%u,%u]},"
-          "\"audio\":{\"route\":%s,\"cplx\":%u,\"kbps\":%u,\"enc\":%u,\"sent\":%u,\"lost\":%u,\"trim\":%u,\"under\":%u,"
+          "\"audio\":{\"route\":%s,\"cplx\":%u,\"mcplx\":%u,\"cplx_now\":%u,\"kbps\":%u,\"enc\":%u,\"sent\":%u,\"lost\":%u,\"trim\":%u,\"under\":%u,"
           "\"resync\":%u,\"bytes\":%llu,\"enc_us\":%llu,\"enc_max\":%u},"
           "\"mic\":{\"pkts\":%u,\"muted\":%u,\"dec\":%u,\"lost\":%u,\"err\":%u,\"drop\":%u,\"peak\":%d,\"age\":%d,"
           "\"talk\":%s},"
@@ -417,7 +423,7 @@ static void send_stats(void)
           s.display_up ? "true" : "false", s.game_up ? "true" : "false", rssi, K.stations,
           bat, (int)s.battery_age_s, ping[0], ping[1], (unsigned)s.pings_sent, (unsigned)s.pings_answered,
           (unsigned)s.input_series, (unsigned)s.input_gaps, (unsigned)s.input_repeats,
-          s.audio_route ? "true" : "false", s.audio_complexity, (unsigned)s.audio_kbps, (unsigned)s.audio_encoded, (unsigned)s.audio_sent,
+          s.audio_route ? "true" : "false", s.audio_complexity, s.audio_mic_complexity, s.audio_complexity_now, (unsigned)s.audio_kbps, (unsigned)s.audio_encoded, (unsigned)s.audio_sent,
           (unsigned)s.audio_not_sent, (unsigned)s.audio_trimmed, (unsigned)s.audio_underruns,
           (unsigned)s.audio_resyncs, (unsigned long long)s.audio_bytes, (unsigned long long)s.audio_enc_us,
           (unsigned)s.audio_enc_us_max, (unsigned)s.mic_packets, (unsigned)s.mic_muted, (unsigned)s.mic_decoded,
@@ -463,6 +469,10 @@ static void cmd_set(const char *key, const char *val)
         if (v < 1 || v > 10) { reply_err("complexity is 1-10"); return; }
         K.set.complexity = (uint8_t)v;
         stadia_audio_set_complexity((int)v);
+    } else if (!strcmp(key, "mic_complexity")) {
+        if (v < 1 || v > 10) { reply_err("mic_complexity is 1-10"); return; }
+        K.set.mic_complexity = (uint8_t)v;
+        stadia_audio_set_mic_complexity((int)v);
     } else if (!strcmp(key, "bitrate")) {
         if (v < STADIA_AUDIO_KBPS_MIN || v > STADIA_AUDIO_KBPS_MAX) { reply_err("bitrate is 32-160 kbps"); return; }
         K.set.kbps = (uint8_t)v;
@@ -554,6 +564,7 @@ static void handle(char *line)
         K.set.mic_running = running;
         apply_gain(K.set.gain_db);
         stadia_audio_set_complexity(K.set.complexity);
+        stadia_audio_set_mic_complexity(K.set.mic_complexity);
         stadia_audio_set_bitrate(K.set.kbps);
         stadia_mic_set_push_to_talk(K.set.ptt);
         apply_rumble();
