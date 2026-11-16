@@ -410,7 +410,8 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
       </section>
 
       <section class="card wide">
-        <h2>Tasks <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">share of one core over the last 2 s</span></h2>
+        <h2>Tasks <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400" id="tasksSpan">share of one core</span></h2>
+        <div class="muted" style="font-size:12.5px;margin:0 0 8px">Updates every 2 s while the headphones are idle. While they play it only updates on <button id="btnTasks">Refresh</button>: listing the tasks stops the board for a few ms, which costs a short glitch in the headphones.</div>
         <div style="overflow-x:auto"><table id="tasks"><thead><tr><th>Task</th><th class="n">CPU</th><th class="n">Priority</th><th class="n">Stack free</th></tr></thead><tbody></tbody></table></div>
       </section>
 
@@ -965,7 +966,9 @@ function renderStats(m) {
   prev = m; prevAt = now;
 }
 
+$("btnTasks").onclick = () => link?.send("tasks");
 function renderTasks(m) {
+  $("tasksSpan").textContent = `share of one core over the last ${m.ms >= 10000 ? Math.round(m.ms / 1000) : (m.ms / 1000).toFixed(1)} s`;
   const rows = m.list.slice().sort((a, b) => b[1] - a[1]);
   const max = Math.max(1, ...rows.map((r) => r[1]));
   $("tasks").tBodies[0].innerHTML = rows.map(([name, pm, prio, stack]) =>
