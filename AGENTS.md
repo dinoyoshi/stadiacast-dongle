@@ -63,7 +63,9 @@ idf.py build
 
 CI: `.github/workflows/firmware-host.yml` runs the host tests; `console-pages.yml` builds the
 board firmware on every PR and, on `main`, publishes it with the web console to GitHub Pages
-(the console's "Install latest" uses that build).
+(the console's "Install latest" uses that build); `release.yml` turns a pushed `v*` tag into a
+GitHub release with the .bin files. Both build through `firmware-build.yml`. Never push a tag
+without the maintainer's OK.
 
 ## Rules learned the hard way
 
@@ -104,7 +106,8 @@ Each of these cost a board test to find. Don't undo them without a board test th
   issues if they change. PRs up to #34 are in dinoyoshi/stadiacast; numbers restart in this
   repository.
 - User-facing changes also update `firmware/esp32p4/README.md` (and the root README's tables
-  for a new board or feature).
+  for a new board or feature), and `firmware/esp32p4/docs/troubleshooting.md` if they add a new
+  way for things to go wrong.
 - A new gamepad mode: follow "Adding a gamepad mode" in `firmware/README.md`, including its
   hash in `firmware/host/gamepad_test.c`.
 - A new board: follow [.claude/skills/port-board/SKILL.md](.claude/skills/port-board/SKILL.md)

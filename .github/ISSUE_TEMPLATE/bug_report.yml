@@ -1,0 +1,102 @@
+name: Bug report
+description: Something on the dongle doesn't work as the user guide says.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please check [troubleshooting](https://github.com/dinoyoshi/stadiacast-dongle/blob/main/firmware/esp32p4/docs/troubleshooting.md) first: it covers the wrong USB port, the controller not joining, serial ports on Linux and headset sound.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+      placeholder: |
+        I woke the controller, the LED went steady, but Windows shows no sound device...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Firmware version
+      description: The web console's Update firmware card shows it ("Running"), as does the serial log at boot. Say if it's your own build.
+      placeholder: 2026.11.16-d372ab8, or v1.0.0, or my own build of commit abc1234
+    validations:
+      required: true
+  - type: dropdown
+    id: board
+    attributes:
+      label: Board
+      options:
+        - DFRobot FireBeetle 2 ESP32-P4
+        - Another board (say which below)
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: What the dongle is plugged into
+      multiple: true
+      options:
+        - Linux
+        - Windows
+        - macOS
+        - SteamOS / Steam Deck
+        - Nintendo Switch
+        - Android
+        - Other (say which below)
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: System version and app
+      description: For example Windows 11 23H2 with Steam, or Fedora 41 with PipeWire.
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Controller mode
+      options:
+        - Xbox 360 (Stadia + A)
+        - DualShock 4 (Stadia + B)
+        - Switch Pro (Stadia + X)
+        - HID gamepad (Stadia + Y)
+        - Not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: area
+    attributes:
+      label: Which part is affected
+      options:
+        - label: Controller joining or connecting
+        - label: Buttons, sticks or triggers
+        - label: Rumble
+        - label: Headset audio
+        - label: Headset microphone
+        - label: Several controllers
+        - label: Pairing from the console
+        - label: Web console or firmware update
+        - label: Flashing or starting up (LED)
+  - type: dropdown
+    id: led
+    attributes:
+      label: What the board's LED does
+      options:
+        - Steady on (controller connected)
+        - Slow blinking (waiting for a controller)
+        - Fast blinking that never stops
+        - Off
+        - Not sure
+  - type: textarea
+    id: log
+    attributes:
+      label: Console log
+      description: |
+        In the [web console](https://dinoyoshi.github.io/stadiacast-dongle/), Log card, turn on "Show the firmware's log", reproduce the problem, then Save or copy the log here. The serial log from the programming port (idf.py monitor) is even better if you have it.
+      render: text
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Number of players, C6 firmware version, your own settings (gain, bitrate), screenshots.

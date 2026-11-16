@@ -88,8 +88,9 @@ What has been tried with a real controller and a real board, by the computer it 
 Known rough edges: some loud songs clip a little in the headset (lowering the gain in the
 console a few dB should help), and Steam shows Xbox 360 mode with the headset on as a generic
 "Xbox Pad". The full log of what was built, tested and learned is in
-[progress.md](firmware/esp32p4/docs/progress.md). If you try something marked ⚪, an issue
-saying how it went is very welcome.
+[progress.md](firmware/esp32p4/docs/progress.md). If you try something marked ⚪, a
+[Tested on my setup](https://github.com/dinoyoshi/stadiacast-dongle/issues/new?template=tested_on_my_setup.yml)
+report saying how it went is very welcome.
 
 ## Quick start
 
@@ -98,9 +99,10 @@ Bluetooth mode has to be flashed back first, [how](firmware/esp32p4/docs/step1-b
 and Chrome or Edge on a desktop for the web console. These steps are for the FireBeetle 2
 ESP32-P4; other boards will have their own guide.
 
-1. **Flash the board once.** Download
-   [stadiacast-dongle-full.bin](https://dinoyoshi.github.io/stadiacast-dongle/firmware/stadiacast-dongle-full.bin)
-   (CI builds it from `main`) and write it at address `0x0` over the board's programming
+1. **Flash the board once.** Download `stadiacast-dongle-full.bin`, either from the
+   [latest release](https://github.com/dinoyoshi/stadiacast-dongle/releases/latest) (a tagged
+   version) or [the build of `main`](https://dinoyoshi.github.io/stadiacast-dongle/firmware/stadiacast-dongle-full.bin)
+   that the console's Install latest uses, and write it at address `0x0` over the board's programming
    USB-C port, either in the browser with [ESP Web Tool](https://espressif.github.io/esptool-js/)
    or with `esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle-full.bin`. You can also
    [build it yourself](firmware/esp32p4/README.md#build-and-flash) with ESP-IDF 5.5.
@@ -119,6 +121,11 @@ Later updates come from the console's **Install latest** button, over the same c
 The [FireBeetle user guide](firmware/esp32p4/README.md) covers all of this in more detail,
 plus the button mapping for each mode, headset setup on Linux and Windows, every setting, and
 what the LED means.
+
+**Something not working?** [Troubleshooting](firmware/esp32p4/docs/troubleshooting.md) covers
+the usual suspects: the wrong USB-C port, an LED that never blinks slowly, a controller that
+doesn't join, no serial port on Linux, and no sound on Windows. If that doesn't help,
+[open an issue](https://github.com/dinoyoshi/stadiacast-dongle/issues/new/choose).
 
 ## For developers
 
@@ -140,6 +147,9 @@ cmake -S firmware/host -B build-host -DMBEDTLS_DIR=/path/to/mbedtls-3.6
 cmake --build build-host -j
 build-host/gamepad_test && build-host/dongle_test && firmware/host/run_loopback.sh build-host
 ```
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the rest: building for the board, what a pull request
+needs (a row in progress.md, what was tested on hardware), and how releases are made.
 
 ## Credits
 
