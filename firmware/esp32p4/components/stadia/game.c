@@ -37,6 +37,9 @@ static struct {
     char series_session[64];
     uint32_t gamepad_id;
     uint32_t input_messages, input_errors;
+    /* link quality: the input series' sequence numbers (counted from power-up) */
+    uint64_t input_last_seq;
+    uint32_t input_series, input_gaps, input_repeats;
     uint64_t feedback_seq;
     int rpc_logged, other_logged;
     /* rumble: wanted (set from any task under the lock) and what the controller has */
@@ -213,6 +216,30 @@ static uint64_t on_series(const uint8_t *s, size_t len)
     return seq;
 }
 
+/* The controller numbers its input series one by one: a jump means series that never arrived,
+ * a number already seen is a resend (our ack was lost or late). A jump of more than
+ * SEQ_RESTART is a new numbering, not loss. */
+#define SEQ_RESTART 1000
+static void count_seq(uint64_t seq)
+{
+    uint64_t last = G.input_last_seq;
+    if (last && seq > last + 1 && seq - last <= SEQ_RESTART) {
+        G.input_gaps += (uint32_t)(seq - last - 1);
+    } else if (last && seq <= last && last - seq <= SEQ_RESTART) {
+        G.input_repeats++;
+        return;
+    }
+    G.input_series++;
+    G.input_last_seq = seq;
+}
+
+void game_get_stats(stadia_stats_t *st)
+{
+    st->input_series = G.input_series;
+    st->input_gaps = G.input_gaps;
+    st->input_repeats = G.input_repeats;
+}
+
 static void on_input(const uint8_t *p, size_t len, framing_t framing, uint8_t pt)
 {
     pbf_t series, comp;
@@ -238,6 +265,7 @@ static void on_input(const uint8_t *p, size_t len, framing_t framing, uint8_t pt
     if (framing == FRAMING_RTP) G.input_pt = pt;
     if (G.input_messages++ == 0) SLOGI(TAG, "first input on the game session");
     if (seq) {
+        count_seq(seq);
         uint8_t ack[16];
         pbw_t a = PBW(ack, sizeof(ack));
         pbw_uint(&a, 4, seq);
@@ -344,6 +372,7 @@ size_t game_initialization(const uint8_t *init, size_t n, uint8_t *out, size_t c
     G.framing = FRAMING_NONE;
     G.input_pt = INPUT_PT_DEFAULT;
     G.input_messages = 0;
+    G.input_last_seq = 0; /* a new session numbers from scratch */
     SLOGI(TAG, "InitializationRequest v%d (raw_dtls=%d): answering with %s:%u", (int)version, echo.raw_dtls,
           g_cfg.advertise_ip, (unsigned)G.link.port);
     return o.len;

@@ -6,9 +6,10 @@
  * To the host, one line each, only while the host has the port open:
  *   {"t":"info",...}      firmware, chip, hotspot; after "hello"
  *   {"t":"settings",...}  the settings; after "hello", "get" and every change
- *   {"t":"stats",...}     once a second: the controller session, headset audio, microphone, USB,
- *                         CPU per core and memory (counters from power-up: the page takes the
- *                         differences)
+ *   {"t":"stats",...}     once a second: the controller session (with its battery and the link
+ *                         quality: keepalive round trip, input series lost), headset audio,
+ *                         microphone, USB, CPU per core and memory (counters from power-up: the
+ *                         page takes the differences)
  *   {"t":"tasks",...}     every 2 s: each task's share of a core since the last one
  *   {"t":"pad",...}       the controller's input as the host gets it, at most 20 times a second
  *   {"t":"ok"|"err",...}  the answer to a command
@@ -340,10 +341,15 @@ static void send_stats(void)
     stadia_get_stats(&s);
     usb_pad_audio_stats_t u;
     usb_pad_audio_stats(&u);
-    char rssi[8] = "null";
+    char rssi[8] = "null", bat[8] = "null", ping[2][12] = {"null", "null"};
     if (K.rssi_ok) snprintf(rssi, sizeof(rssi), "%d", K.rssi);
+    if (s.battery_pct >= 0) snprintf(bat, sizeof(bat), "%d", s.battery_pct);
+    for (int i = 0; i < 2; i++) {
+        if (s.ping_us[i] >= 0) snprintf(ping[i], sizeof(ping[i]), "%d", (int)s.ping_us[i]);
+    }
     sendf("{\"t\":\"stats\",\"up\":%lld,\"cpu\":[%d,%d],\"heap\":[%u,%u,%u],"
-          "\"ctl\":{\"state\":\"%s\",\"disp\":%s,\"game\":%s,\"rssi\":%s,\"sta\":%d},"
+          "\"ctl\":{\"state\":\"%s\",\"disp\":%s,\"game\":%s,\"rssi\":%s,\"sta\":%d,"
+          "\"bat\":%s,\"bat_age\":%d,\"ping\":[%s,%s],\"pings\":[%u,%u],\"in\":[%u,%u,%u]},"
           "\"audio\":{\"route\":%s,\"cplx\":%u,\"kbps\":%u,\"enc\":%u,\"sent\":%u,\"lost\":%u,\"trim\":%u,\"under\":%u,"
           "\"resync\":%u,\"bytes\":%llu,\"enc_us\":%llu,\"enc_max\":%u},"
           "\"mic\":{\"pkts\":%u,\"muted\":%u,\"dec\":%u,\"lost\":%u,\"err\":%u,\"drop\":%u,\"peak\":%d,\"age\":%d,"
@@ -355,6 +361,8 @@ static void send_stats(void)
           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
           (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), s.display_state ? s.display_state : "none",
           s.display_up ? "true" : "false", s.game_up ? "true" : "false", rssi, K.stations,
+          bat, (int)s.battery_age_s, ping[0], ping[1], (unsigned)s.pings_sent, (unsigned)s.pings_answered,
+          (unsigned)s.input_series, (unsigned)s.input_gaps, (unsigned)s.input_repeats,
           s.audio_route ? "true" : "false", s.audio_complexity, (unsigned)s.audio_kbps, (unsigned)s.audio_encoded, (unsigned)s.audio_sent,
           (unsigned)s.audio_not_sent, (unsigned)s.audio_trimmed, (unsigned)s.audio_underruns,
           (unsigned)s.audio_resyncs, (unsigned long long)s.audio_bytes, (unsigned long long)s.audio_enc_us,

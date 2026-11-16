@@ -1141,6 +1141,14 @@ async def run_game(fc: FakeController, args, t0: float) -> int:
                 await fc.wait_game_ack(3),
                 flush=True,
             )
+        if args.battery is not None:
+            fc.send_battery(args.battery)
+            print(f"[{time.monotonic() - t0:7.3f}] battery gauge {args.battery:g} sent", flush=True)
+        if args.input_gap:
+            # series the receiver never sees, then one it does: it should count the gap
+            fc.seq += args.input_gap
+            seq = fc.send_game_input(buttons=0)
+            print(f"[{time.monotonic() - t0:7.3f}] skipped {args.input_gap} input series; series {seq} sent", flush=True)
         print(f"[{time.monotonic() - t0:7.3f}] holding the game session for {args.game:g} s", flush=True)
         if args.talk > 0:
             # push to talk: Assistant (0x400) held for --talk seconds, after 2 s of not talking
@@ -1193,5 +1201,9 @@ if __name__ == "__main__":
     )
     ap.add_argument(
         "--talk", type=float, default=0.0, help="with --game: hold Assistant this many seconds (push to talk)"
+    )
+    ap.add_argument("--battery", type=float, default=None, help="with --game: send this battery gauge (0.0 to 1.0)")
+    ap.add_argument(
+        "--input-gap", type=int, default=0, help="with --game: skip this many input sequence numbers once"
     )
     sys.exit(asyncio.run(run_cli(ap.parse_args())))
