@@ -233,6 +233,27 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
         <div class="spark" id="spPing"></div>
       </section>
 
+      <section class="card wide" id="plCard">
+        <h2>Controllers <span id="plPill" class="pill">–</span></h2>
+        <div style="overflow-x:auto"><table id="plTable"><thead><tr><th>Player</th><th>Controller</th><th>Status</th><th class="n">Battery</th><th class="n">Round trip</th><th class="n">Input lost</th><th></th></tr></thead><tbody></tbody></table></div>
+        <div class="settings" style="margin-top:14px">
+          <div class="setting">
+            <label>Players at once</label>
+            <div class="seg" id="setPlayers" role="group" aria-label="Players at once"></div>
+            <div class="help" id="plHelp">Each controller gets a player number and keeps it. Xbox 360 and HID modes give each player its own gamepad; DualShock 4 and Switch Pro stay one gamepad (player 1). Headphones and mic are player 1's.</div>
+          </div>
+          <div class="setting stack">
+            <label>Pair a controller <span id="pairPill" class="pill">Idle</span></label>
+            <div class="help">Gives a controller in setup mode this dongle's hotspot over Bluetooth, no computer tools needed. <b>This replaces the Wi-Fi network the controller knows:</b> afterwards it only joins this dongle. Setup mode: turn the controller off (hold Stadia until the light goes out), then hold Y and press Stadia; the light pulses orange.</div>
+            <div class="row">
+              <button id="pairStart" class="primary">Pair a controller</button>
+              <button id="pairStop" hidden>Cancel</button>
+            </div>
+            <p id="pairMsg" class="muted" style="margin:0"></p>
+          </div>
+        </div>
+      </section>
+
       <section class="card">
         <h2>Headphones <span id="audPill" class="pill">–</span></h2>
         <dl class="kv">
@@ -373,7 +394,7 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
       </section>
 
       <section class="card">
-        <h2>Live input</h2>
+        <h2>Live input <span class="seg" id="livePlayer" role="group" aria-label="Player" hidden></span></h2>
         <div class="pad">
           <div><div class="stick" id="stL"><i></i></div></div>
           <div><div class="stick" id="stR"><i></i></div></div>
@@ -596,7 +617,8 @@ function onLine(line) {
       case "pad": renderPad(m); break;
       case "ota": onOta(m); break;
       case "rumble": renderRumble(m); break;
-      case "ok": if (m.reconnect) { toast(m.key === "reboot" ? "Restarting…" : "Changing mode…"); } break;
+      case "pair": renderPair(m); break;
+      case "ok": if (m.key === "players" && m.restart) toast("Saved: restart the dongle to use it"); if (m.reconnect) { toast(m.key === "reboot" ? "Restarting…" : "Changing mode…"); } break;
       case "err": toast("Dongle: " + m.msg); break;
     }
     return;
@@ -667,6 +689,7 @@ function renderRumble(m) {
 }
 
 function renderSettings() {
+  renderPlayersSetting();
   [...modeSeg.children].forEach((b, i) => b.setAttribute("aria-pressed", String(settings.mode === i)));
   for (const [id, v] of [["setGain", settings.gain], ["setCplx", settings.complexity], ["setKbps", settings.bitrate]]) {
     const el = $(id);
@@ -682,6 +705,77 @@ function renderSettings() {
   $("logOn").checked = settings.logs;
   renderRumbleSettings();
 }
+
+
+/* ---- players and pairing ---- */
+let livePlayer = 0;
+const playersSeg = $("setPlayers");
+[1, 2, 3, 4].forEach((n) => {
+  const b = document.createElement("button");
+  b.textContent = n;
+  b.setAttribute("aria-pressed", "false");
+  b.onclick = () => { if (link && settings?.players !== n) link.send(`set players ${n}`); };
+  playersSeg.appendChild(b);
+});
+function renderPlayersSetting() {
+  const known = settings.players != null; // older firmware: one controller
+  $("plCard").hidden = !known;
+  if (!known) return;
+  [...playersSeg.children].forEach((b, i) => b.setAttribute("aria-pressed", String(settings.players === i + 1)));
+  $("plHelp").innerHTML = settings.players === settings.players_running
+    ? "Each controller gets a player number and keeps it. Xbox 360 and HID modes give each player its own gamepad; DualShock 4 and Switch Pro stay one gamepad (player 1). Headphones and mic are player 1's."
+    : `<b>Changed: restart the dongle</b> to serve ${settings.players} controller${settings.players > 1 ? "s" : ""} (now ${settings.players_running}).`;
+  const seg = $("livePlayer");
+  const n = settings.players_running || 1;
+  seg.hidden = n < 2;
+  if (seg.children.length !== n) {
+    seg.innerHTML = "";
+    for (let i = 0; i < n; i++) {
+      const b = document.createElement("button");
+      b.textContent = "P" + (i + 1);
+      b.onclick = () => { livePlayer = i; [...seg.children].forEach((x, j) => x.setAttribute("aria-pressed", String(j === i))); };
+      b.setAttribute("aria-pressed", String(i === livePlayer));
+      seg.appendChild(b);
+    }
+  }
+}
+const PL_STATE = { none: "Not connected", "dtls-connected": "Linking", "get-controller-state-sent": "Linking", "controller-state-received": "Linking", ready: "Connected", input: "Connected" };
+function renderPlayers(list) {
+  if (!list) return;
+  const body = $("plTable").tBodies[0];
+  let up = 0;
+  body.innerHTML = list.map((p, i) => {
+    const on = p.disp && (p.state === "ready" || p.state === "input");
+    if (on) up++;
+    const status = p.disp ? PL_STATE[p.state] || p.state : p.known ? (p.seen >= 0 ? `Away · seen ${fmtAgo(p.seen)}` : "Away") : "Free";
+    const cls = on ? "good-t" : p.disp ? "warn-t" : "muted";
+    const usb = p.usb ? "" : ' <span class="sub muted">(no gamepad in this mode)</span>';
+    return `<tr><td>${i + 1}${i === 0 ? ' <span class="muted">· audio</span>' : ""}</td>`
+      + `<td>${p.id ? esc(p.id) : '<span class="muted">–</span>'}${p.ip ? ` <span class="muted">${esc(p.ip)}</span>` : ""}${usb}</td>`
+      + `<td class="${cls}">${esc(status)}</td>`
+      + `<td class="n">${p.bat == null ? "–" : p.bat + "%"}</td>`
+      + `<td class="n">${p.ping == null ? "–" : (p.ping / 1000).toFixed(1) + " ms"}</td>`
+      + `<td class="n">${p.in ? (p.in[0] + p.in[1] ? (100 * p.in[1] / (p.in[0] + p.in[1])).toFixed(1) + "%" : "0%") : "–"}</td>`
+      + `<td class="n">${p.known ? `<button data-forget="${i + 1}" title="This player number goes to the next new controller">Forget</button>` : ""}</td></tr>`;
+  }).join("");
+  body.querySelectorAll("[data-forget]").forEach((b) => {
+    b.onclick = () => { if (confirm(`Forget player ${b.dataset.forget}'s controller? Its links close; the number goes to the next new controller.`)) link?.send(`forget ${b.dataset.forget}`); };
+  });
+  pill($("plPill"), `${up} of ${list.length} connected`, up ? "good" : "");
+}
+const PAIR_PILL = { idle: ["Idle", ""], starting: ["Starting", "warn"], scanning: ["Looking", "warn"], connecting: ["Connecting", "warn"], reading: ["Reading key", "warn"], sending: ["Sending", "warn"], waiting: ["Waiting", "warn"], done: ["Paired", "good"], failed: ["Failed", "bad"] };
+function renderPair(m) {
+  const [t, c] = PAIR_PILL[m.state] || [m.state, ""];
+  pill($("pairPill"), t, c);
+  $("pairMsg").textContent = m.msg || "";
+  $("pairStart").hidden = m.busy;
+  $("pairStop").hidden = !m.busy;
+}
+$("pairStart").onclick = () => {
+  if (!confirm("Pair a controller with this dongle?\n\nThe controller must be in setup mode (light pulsing orange). Pairing replaces the Wi-Fi network it knows: afterwards it only joins this dongle.")) return;
+  link?.send("pair");
+};
+$("pairStop").onclick = () => link?.send("pair stop");
 
 /* sparklines: one series each, hover for the value */
 function spark(id, title, data, unit, opts = {}) {
@@ -795,6 +889,7 @@ function renderLink(c, up) {
 }
 
 function renderStats(m) {
+  renderPlayers(m.players);
   const now = performance.now();
   const dt = prev ? Math.max(0.2, (m.up - prev.up) / 1000) : null;
   const rate = (f) => (prev && dt ? (f(m) - f(prev)) / dt : null);
@@ -875,6 +970,7 @@ const BTN = [["A", 0x1000], ["B", 0x2000], ["X", 0x4000], ["Y", 0x8000], ["LB", 
 const EXTRA = [["Capture", 1], ["Assistant", 2]];
 $("btns").innerHTML = [...BTN, ...EXTRA].map(([n]) => `<span>${n}</span>`).join("");
 function renderPad(p) {
+  if ((p.p || 0) !== livePlayer) return;
   const spans = $("btns").children;
   BTN.forEach(([, bit], i) => spans[i].classList.toggle("on", !!(p.b & bit)));
   EXTRA.forEach(([, bit], i) => spans[BTN.length + i].classList.toggle("on", !!(p.x & bit)));
@@ -1091,8 +1187,11 @@ $("fwFile").addEventListener("change", async (e) => {
 /* ---- demo: a pretend dongle, for a look without one ---- */
 const DEMO = new URLSearchParams(location.search).has("demo");
 function demoLink() {
-  const st = { mode: 0, gain: 0, complexity: 8, bitrate: 96, mic: true, mic_running: true, ptt: true, rumble: true, rumble_left: 100, rumble_right: 100, logs: false };
+  const st = { mode: 0, gain: 0, complexity: 8, bitrate: 96, mic: true, mic_running: true, ptt: true, rumble: true, rumble_left: 100, rumble_right: 100, logs: false, players: 2, players_running: 2, usb_players: 2 };
   let rmbTimer = null;
+  const pl2 = { known: true, id: "demo-controller-2" };
+  let pairTimers = [];
+  const pairEmit = (state, msg, busy = true) => emit({ t: "pair", state, busy, msg, name: state === "scanning" ? "" : "Stadia-4F2A", rssi: -48, setup: -1 });
   const rmbOut = (l, r, test) => emit({ t: "rumble", out: st.rumble ? [Math.min(65535, Math.round(l * 257 * st.rumble_left / 100)), Math.min(65535, Math.round(r * 257 * st.rumble_right / 100))] : [0, 0], host: [0, 0], test });
   const c = { up: 734000, sent: 0, bytes: 0, under: 0, enc: 0, enc_us: 0, mpk: 0, mdec: 0, upk: 0, mupk: 0, pings: 0, ins: 0, gaps: 0 };
   const emit = (o) => setTimeout(() => onLine(JSON.stringify(o)), 30);
@@ -1109,7 +1208,9 @@ function demoLink() {
     c.sent += 50; c.bytes += 50 * st.bitrate * 2.5; c.enc += 50; c.enc_us += 50 * (st.complexity * 750 + Math.random() * 1500);
     if (talk && Math.random() < 0.35) c.under += 1;
     if (talk || !st.ptt) { c.mpk += 50; c.mdec += 50; }
-    emit({ t: "stats", up: c.up, cpu: [Math.round(38 + Math.random() * 10 + (talk ? 20 : 0)), Math.round(22 + Math.random() * 8)], heap: [61440 + Math.round(Math.random() * 900), 48210, 31.2e6],
+    const players = [{ known: true, id: "demo-controller-1", ip: "192.168.4.2", seen: 0, state: "input", disp: true, game: true, bat: 76 - Math.floor(tick / 240), ping: 4200, in: [c.ins, c.gaps], usb: true }];
+    for (let i = 1; i < st.players_running; i++) players.push(i === 1 && pl2.known ? { known: true, id: pl2.id, ip: "192.168.4.3", seen: 3600 + tick, state: "none", disp: false, game: false, bat: 41, ping: null, in: [0, 0], usb: st.mode === 0 || st.mode === 3 } : { known: false, id: "", ip: "", seen: -1, state: "none", disp: false, game: false, bat: null, ping: null, in: [0, 0], usb: st.mode === 0 || st.mode === 3 });
+    emit({ t: "stats", up: c.up, players, cpu: [Math.round(38 + Math.random() * 10 + (talk ? 20 : 0)), Math.round(22 + Math.random() * 8)], heap: [61440 + Math.round(Math.random() * 900), 48210, 31.2e6],
       ctl: { state: "input", disp: true, game: true, rssi: Math.round(-52 - Math.random() * 6), sta: 1,
         bat: 76 - Math.floor(tick / 240), bat_age: 95 + tick % 240, ping: [3800 + Math.round(Math.random() * 4000), 3100 + Math.round(Math.random() * 5000)],
         pings: [c.pings, c.pings], in: [c.ins, c.gaps, 0] },
@@ -1118,7 +1219,7 @@ function demoLink() {
       usb: { mode: st.mode, mounted: true, play: true, rec: true, vol: [0, 0], mute: [false, false], pkts: tick * 8000, fail: 0, ovf: 0, mpkts: tick * 8000, munder: 1, mskip: 0, mdrop: 0, mbuf: 1900, cdrop: 0 } });
     if (tick % 2 === 0) emit({ t: "tasks", ms: 2000, list: [["audio", 312 + Math.round(Math.random() * 40), 6, 31000], ["rtc", 96, 5, 9100], ["mic", talk ? 180 : 4, 4, 30500], ["IDLE0", 420, 0, 800], ["IDLE1", 700, 0, 820], ["tiT", 38, 18, 2100], ["console", 6, 2, 3900], ["esp_timer", 9, 22, 2500], ["https", 2, 5, 5200], ["TinyUSB", 22, 5, 2600]] });
     const ang = tick / 3;
-    emit({ t: "pad", b: talk ? 0x1000 : 0, x: talk ? 2 : 0, lt: (tick * 40) % 255, rt: 0, lx: Math.round(Math.cos(ang) * 20000), ly: Math.round(Math.sin(ang) * 20000), rx: 0, ry: 0 });
+    emit({ t: "pad", p: 0, b: talk ? 0x1000 : 0, x: talk ? 2 : 0, lt: (tick * 40) % 255, rt: 0, lx: Math.round(Math.cos(ang) * 20000), ly: Math.round(Math.sin(ang) * 20000), rx: 0, ry: 0 });
     if (st.logs) setTimeout(() => onLine("I (" + c.up + ") audio: 500 frames sent in 10 s (240 B avg), 0 not sent, 0 trimmed, 1 underruns, 0 resyncs; encode avg 6120 us, max 9800 us"), 40);
   }, 1000);
   return {
@@ -1128,7 +1229,7 @@ function demoLink() {
       else if (cmd === "ota") sendOta();
       else if (cmd === "hello") { emit({ t: "info", fw, project: "stadiacast_dongle", built: "Nov 15 2026 18:00:00", idf: "v5.5.1", chip: "ESP32-P4 rev v1.3", cores: 2, mac: "00:00:00:00:00:00", ssid: "stadiacast-dongle", channel: 6, audio: true, modes: MODES }); sendSettings(); }
       else if (cmd === "get") sendSettings();
-      else if (cmd === "set") { const n = +v; if (k === "mode") st.mode = n; else if (k === "gain") st.gain = n; else if (k === "complexity") st.complexity = n; else if (k === "bitrate") st.bitrate = n; else if (k === "mic") st.mic = !!n; else if (k === "ptt") st.ptt = !!n; else if (k === "rumble") { st.rumble = !!n; if (!n) { clearTimeout(rmbTimer); rmbOut(0, 0, false); } } else if (k === "rumble_left") st.rumble_left = n; else if (k === "rumble_right") st.rumble_right = n; emit({ t: "ok", key: k }); sendSettings(); }
+      else if (cmd === "set") { const n = +v; if (k === "mode") st.mode = n; else if (k === "gain") st.gain = n; else if (k === "complexity") st.complexity = n; else if (k === "bitrate") st.bitrate = n; else if (k === "mic") st.mic = !!n; else if (k === "ptt") st.ptt = !!n; else if (k === "rumble") { st.rumble = !!n; if (!n) { clearTimeout(rmbTimer); rmbOut(0, 0, false); } } else if (k === "rumble_left") st.rumble_left = n; else if (k === "rumble_right") st.rumble_right = n; else if (k === "players") st.players = n; emit({ t: "ok", key: k, restart: k === "players" && n !== st.players_running }); sendSettings(); }
       else if (cmd === "rumble") {
         if (!st.rumble) { emit({ t: "err", msg: "rumble is off" }); return; }
         const [, l, r, ms] = line.split(" ").map(Number);
@@ -1140,7 +1241,15 @@ function demoLink() {
       else if (cmd === "logs") { st.logs = k === "on"; sendSettings(); }
       else if (cmd === "defaults") { Object.assign(st, { gain: 0, complexity: 8, bitrate: 96, mic: true, ptt: true, rumble: true, rumble_left: 100, rumble_right: 100 }); sendSettings(); }
       else if (cmd === "reboot") toast("The demo doesn't restart");
-      if (cmd === "hello") sendOta();
+      else if (cmd === "forget") { if (+k === 2) pl2.known = false; emit({ t: "ok", key: "forget" }); }
+      else if (cmd === "pair" && k === "stop") { pairTimers.forEach(clearTimeout); pairEmit("failed", "cancelled", false); }
+      else if (cmd === "pair") {
+        pairEmit("scanning", "looking for a controller in setup mode (light pulsing orange)");
+        pairTimers = [[2500, "connecting", "found Stadia-4F2A (-48 dBm), connecting"], [3500, "reading", "connected to Stadia-4F2A (MTU 517), reading its key"], [9000, "sending", "sending the hotspot \"stadiacast-dongle\" to Stadia-4F2A"], [9500, "waiting", "waiting for Stadia-4F2A to join \"stadiacast-dongle\""]]
+          .map(([ms, s2, msg]) => setTimeout(() => pairEmit(s2, msg), ms));
+        pairTimers.push(setTimeout(() => { pairEmit("done", "Stadia-4F2A has the hotspot and left setup mode. Its first start after setup does not connect: wait a minute, turn it off (hold the Stadia button), then wake it", false); pl2.known = true; }, 13000));
+      }
+      if (cmd === "hello") { sendOta(); emit({ t: "pair", state: "idle", busy: false, msg: "", name: "", rssi: 0, setup: -1 }); }
     },
     sendBytes(bytes) {
       if (!img) return Promise.resolve();

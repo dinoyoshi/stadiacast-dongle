@@ -57,6 +57,23 @@ void players_save_count(int n);
 /* stadia_controller_cb_t: a player number went to another controller (or was freed). */
 void players_on_controller(int player, const char *device_id, void *arg);
 
+/* Pairing (pair.c): give a controller in Bluetooth setup mode the hotspot's name and password
+ * through the C6's Bluetooth, as the Stadia app did. Runs in its own task; the console polls the
+ * status. */
+typedef struct {
+    const char *state; /* idle, starting, scanning, connecting, reading, sending, waiting, done, failed */
+    char msg[160];     /* what is going on, or why it failed, for a person */
+    char name[32];     /* the controller found, "" before one */
+    int rssi;
+    int setup_state;   /* the controller's last setup state byte, -1 none */
+    bool busy;
+    uint32_t gen;      /* changes whenever anything above does */
+} pair_status_t;
+bool pair_init(void);
+const char *pair_start(void); /* NULL when started, else why not */
+void pair_stop(void);
+void pair_get_status(pair_status_t *out);
+
 /* Rumble (rumble.c): the host's levels to the controller's motors through the console's
  * settings, and the console's test. rumble_init() before settings_load(). */
 #define RUMBLE_PCT_MAX 200

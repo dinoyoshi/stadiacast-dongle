@@ -22,6 +22,8 @@ OTG port, as four kinds of controller, on Linux and Windows.
 | Headset microphone (the controller's headset as the PC's USB microphone) | done | Linux (PipeWire): voice recorded, no clipping, 0 packets lost |
 | Push to talk on the Assistant button | done | board: sound 15-50 ms after the press, stops 0.3 s after release; headphone underruns about 0 per 10 s while the mic is idle |
 | Web console (live stats and settings over a USB serial port, Web Serial page on GitHub Pages) | done | board over USB on Linux (2026-11-16) |
+| Several controllers at once, one USB gamepad per player | done | host build: two fake controllers at once, input and rumble each, audio to player 1 only; board pending |
+| Pairing a controller over the board's Bluetooth (C6 via ESP-Hosted, NimBLE on the P4) | built | board pending |
 | Firmware updates from the web console (two app slots, rollback, CI-built image on Pages) | done | board: wired flash of the new layout boots from ota_0 (2026-11-16); first console update installed but its CI build (IDF 5.5.4) could not start the servers, fixed in PR #21 |
 
 Test rig: FireBeetle 2 ESP32-P4 with a v1.3 P4, C6 on ESP-Hosted 2.13.1, a Stadia Controller on
@@ -52,6 +54,7 @@ All merged into `main`.
 | #19 | Battery and connection quality in the web console | battery gauge (`ControllerToDisplay` #10) with its age; keepalive STUN round trip per link; input series sequence gaps and unanswered keepalives over the last minute; Good/Fair/Poor verdict. Host-tested with the fake controller (`--battery`, `--input-gap`); board test pending |
 | #20 | Firmware updates from the web console | two app slots (`ota_0`, `ota_1`; `c6_fw` stays at 0x310000) and bootloader rollback; `ota begin <size> <sha256>` then the raw image over the console's serial port, 16 KB window, into a PSRAM stream buffer; SHA-256, ESP-IDF image and project-name checks before the switch; the new image is kept once USB is up for 10 s. CI builds the app and full-flash images with ESP-IDF 5.5.4 and publishes them with the console on Pages. Needs one wired flash for the new layout. Built here; board test pending |
 | #21 | Console updates: CI build that works on the board, safer trial | the first CI image (ESP-IDF 5.5.4) failed on the board in `mbedtls_ecp_gen_key` (-0x4d00, ECP random failed): no DTLS certificate, so no servers, and the controller joined the hotspot but got no answers; the same commit built with 5.5.6 works. CI now builds with 5.5.6 and the registry's components, as on the PC (git copies only if the registry fails). A new image whose servers don't start rolls back at once instead of being kept after 10 s |
+| #23 | Several controllers and pairing on the dongle | up to 4 players (`set players N`, after a restart): each controller gets a player number by its device ids or display token, with its own GMsg queue and links on UDP 40000+2n / 40001+2n, kept in NVS `players`; slot 0's state stays in internal RAM, the others' in PSRAM. Xbox 360 and HID modes present one gamepad per player (endpoints 0x81, 0x85, 0x86, 0x87; Xbox with several pads uses 1209:0001 and one MS OS 2.0 `XUSB10` function per pad). Audio, mic and mode combos are player 1's. Pairing (`main/pair.c`, console `pair`): NimBLE on the P4 over ESP-Hosted VHCI to the C6's radio, the same exchange as `stadiacast-provision` (crypto window 1a, RSA PKCS#1 v1.5 password, connect JSON) with the hotspot's name and password. Console Controllers card. Host-tested with two fake controllers (`STADIA_PLAYERS=2`, `--device-id`); board test pending |
 
 ## Things we learned the hard way
 
@@ -84,7 +87,7 @@ All merged into `main`.
 
 - Slight clipping on some loud songs. Likely fix: a few dB of headroom before the Opus encoder.
 - DualShock 4 and Switch Pro rumble, and Switch Pro mode on a real Switch, are untested.
-- One controller at a time.
+- Several controllers and on-board pairing are untested on the board (one real controller so far).
 - While Assistant is held (the microphone running), the headphones' stream has 1 to 3 underruns per 10 s (about 0 otherwise).
 
 ## Next

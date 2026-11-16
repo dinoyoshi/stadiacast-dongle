@@ -21,6 +21,8 @@
  *   default, 5 s at most; "rumble 0 0" stops it)
  *   | ota [begin <size> <sha256>]  (a firmware update: ota.c, which also sends {"t":"ota",...})
  *   | forget <player 1-4>  (that player number goes to the next new controller)
+ *   | pair [stop]  (give a controller in Bluetooth setup mode the hotspot: pair.c; progress comes
+ *     as {"t":"pair","state":...,"msg":...} whenever it changes)
  *   keys: mode 0-3, gain -12..0 (dB before the Opus encoder), complexity 1-10,
  *   bitrate 32-160 (Opus kbit/s), mic 0/1 (after a
  *   restart), ptt 0/1 (push to talk), rumble 0/1, rumble_left and rumble_right 0-200 (% strength),
@@ -500,6 +502,25 @@ static void cmd_rumble(const char *l, const char *r, const char *ms)
     sendf("{\"t\":\"ok\",\"key\":\"rumble\"}");
 }
 
+/* the pairing's progress, when it changes */
+static void send_pair(bool always)
+{
+    static uint32_t gen;
+    pair_status_t p;
+    pair_get_status(&p);
+    if (!always && p.gen == gen) return;
+    gen = p.gen;
+    char msg[200];
+    size_t j = 0;
+    for (const char *c = p.msg; *c && j < sizeof(msg) - 2; c++) { /* JSON-safe */
+        if (*c == '"' || *c == '\\') msg[j++] = '\\';
+        msg[j++] = *c;
+    }
+    msg[j] = 0;
+    sendf("{\"t\":\"pair\",\"state\":\"%s\",\"busy\":%s,\"msg\":\"%s\",\"name\":\"%s\",\"rssi\":%d,\"setup\":%d}", p.state,
+          p.busy ? "true" : "false", msg, p.name, p.rssi, p.setup_state);
+}
+
 /* the motors' levels, when they change (at most every 50 ms, with the pad) */
 static void send_rumble(void)
 {
@@ -520,6 +541,7 @@ static void handle(char *line)
         send_info();
         send_settings();
         ota_send_status(sendf);
+        send_pair(true);
     } else if (!strcmp(cmd, "get")) {
         send_settings();
     } else if (!strcmp(cmd, "set")) {
@@ -554,6 +576,16 @@ static void handle(char *line)
         if (n < 1 || n > K.players_running) { reply_err("forget <player>: a player number of this start"); return; }
         stadia_forget_player((int)n - 1);
         sendf("{\"t\":\"ok\",\"key\":\"forget\"}");
+    } else if (!strcmp(cmd, "pair")) {
+        char *v = strtok_r(NULL, " \t", &save);
+        if (v && !strcmp(v, "stop")) {
+            pair_stop();
+            sendf("{\"t\":\"ok\",\"key\":\"pair\"}");
+            return;
+        }
+        const char *err = pair_start();
+        if (err) { reply_err(err); return; }
+        sendf("{\"t\":\"ok\",\"key\":\"pair\"}");
     } else if (!strcmp(cmd, "reboot")) {
         sendf("{\"t\":\"ok\",\"key\":\"reboot\",\"reconnect\":true}");
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -580,6 +612,7 @@ static void console_task(void *arg)
         }
         send_pad();
         send_rumble();
+        send_pair(false);
         int64_t now = esp_timer_get_time();
         if (now >= next_stats) {
             next_stats = now + 1000000;
@@ -606,6 +639,7 @@ void console_start(bool mic_running, int players)
         ESP_LOGE(TAG, "no memory for the console");
         return;
     }
+    pair_init();
     K.started = true;
     K.prev_vprintf = esp_log_set_vprintf(log_vprintf);
     /* low priority: stats wait for the audio */
