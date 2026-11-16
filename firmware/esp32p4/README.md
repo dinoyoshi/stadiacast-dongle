@@ -54,7 +54,7 @@ idf.py -p <port> flash monitor     # the serial / programming USB-C port, not th
 
 The first build downloads `esp_hosted`, `esp_wifi_remote` and `esp_tinyusb` from the Espressif
 component registry. An existing `sdkconfig` from an old checkout may predate the custom partition
-table or newer settings (such as code running from PSRAM); delete it and let `sdkconfig.defaults`
+table or newer settings (such as TLS buffers in PSRAM); delete it and let `sdkconfig.defaults`
 apply.
 
 **Without installing ESP-IDF**, flash a single merged image (made with `idf.py merge-bin`) at

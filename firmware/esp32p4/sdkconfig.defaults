@@ -8,9 +8,6 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_SPIRAM=y
-# Run code and constants from PSRAM (copied there at boot) instead of the 40 MHz flash: the
-# caches miss into 200 MHz PSRAM, which matters for Opus while the mic decodes on the other core.
-CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 
 # Wi-Fi comes from the on-board ESP32-C6 through ESP-Hosted
 CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
