@@ -22,8 +22,12 @@ OTG port, as four kinds of controller, on Linux and Windows.
 | Headset microphone (the controller's headset as the PC's USB microphone) | done | Linux (PipeWire): voice recorded, no clipping, 0 packets lost |
 | Push to talk on the Assistant button | done | board: sound 15-50 ms after the press, stops 0.3 s after release; headphone underruns about 0 per 10 s while the mic is idle |
 | Web console (live stats and settings over a USB serial port, Web Serial page on GitHub Pages) | done | board over USB on Linux (2026-11-16) |
-| Several controllers at once, one USB gamepad per player | done | host build: two fake controllers at once, input and rumble each, audio to player 1 only; board pending |
-| Pairing a controller over the board's Bluetooth (C6 via ESP-Hosted, NimBLE on the P4) | built | board (2026-11-16): finds the controller and reads its key, then rebooted (stack overflow, fixed in PR #24); retest pending |
+| TLS and audio buffers in PSRAM, flash at QIO 80 MHz | done | board (2026-11-16): boots, ready, mic works |
+| Adjustable Opus bitrate (32-160 kbps) | done | host build; board listening test pending |
+| Rumble settings and test from the console | done | board (2026-11-16) |
+| Controller battery and connection quality in the console | done | board (2026-11-16): battery reading right; connection figures not yet checked on a weak link |
+| Several controllers at once, one USB gamepad per player | done | host build: two fake controllers at once, input and rumble each, audio to player 1 only; board with one real controller; players 2-4 untested with real controllers |
+| Pairing a controller over the board's Bluetooth (C6 via ESP-Hosted, NimBLE on the P4) | done | board (2026-11-16, after PR #24): finds the controller, reads its key, sends the hotspot's credentials; the controller joined and connected about 20 s later without the usual off and wake |
 | Firmware updates from the web console (two app slots, rollback, CI-built image on Pages) | done | board (2026-11-16): wired flash of the new layout boots from ota_0; "Install latest" of the CI build (ESP-IDF 5.5.6, PR #21) installs over USB and the controller connects |
 
 Test rig: FireBeetle 2 ESP32-P4 with a v1.3 P4, C6 on ESP-Hosted 2.13.1, a Stadia Controller on
@@ -52,10 +56,10 @@ All merged into `main`.
 | #17 | Adjustable Opus bitrate | headphone stream bitrate 32-160 kbps (default 96, menuconfig `DONGLE_OPUS_BITRATE`), set from the web console or `set bitrate N`, saved in NVS, applied from the next 20 ms frame. Host-tested (48 kbps gives 121 B frames); board test pending |
 | #18 | Rumble settings and test | rumble on/off and strength per motor (0-200%) saved in NVS, applied in `main/rumble.c`; console `set rumble*` and `rumble <l> <r> [ms]` test, live motor levels, a Rumble card on the page. Host-tested; board-tested 2026-11-16: the console's rumble test works |
 | #19 | Battery and connection quality in the web console | battery gauge (`ControllerToDisplay` #10) with its age; keepalive STUN round trip per link; input series sequence gaps and unanswered keepalives over the last minute; Good/Fair/Poor verdict. Host-tested with the fake controller (`--battery`, `--input-gap`); board-tested 2026-11-16: the battery reading looks right (the connection figures not yet checked against a weak link) |
-| #20 | Firmware updates from the web console | two app slots (`ota_0`, `ota_1`; `c6_fw` stays at 0x310000) and bootloader rollback; `ota begin <size> <sha256>` then the raw image over the console's serial port, 16 KB window, into a PSRAM stream buffer; SHA-256, ESP-IDF image and project-name checks before the switch; the new image is kept once USB is up for 10 s. CI builds the app and full-flash images with ESP-IDF 5.5.4 and publishes them with the console on Pages. Needs one wired flash for the new layout. Built here; board test pending |
+| #20 | Firmware updates from the web console | two app slots (`ota_0`, `ota_1`; `c6_fw` stays at 0x310000) and bootloader rollback; `ota begin <size> <sha256>` then the raw image over the console's serial port, 16 KB window, into a PSRAM stream buffer; SHA-256, ESP-IDF image and project-name checks before the switch; the new image is kept once USB is up for 10 s. CI builds the app and full-flash images and publishes them with the console on Pages. Needs one wired flash for the new layout. Board-tested 2026-11-16 (wired flash of the new layout, then Install latest once #21 landed) |
 | #21 | Console updates: CI build that works on the board, safer trial | the first CI image (ESP-IDF 5.5.4) failed on the board in `mbedtls_ecp_gen_key` (-0x4d00, ECP random failed): no DTLS certificate, so no servers, and the controller joined the hotspot but got no answers; the same commit built with 5.5.6 works. CI now builds with 5.5.6 and the registry's components, as on the PC (git copies only if the registry fails). A new image whose servers don't start rolls back at once instead of being kept after 10 s. Board-tested 2026-11-16: Install latest from the console, the controller connects |
-| #23 | Several controllers and pairing on the dongle | up to 4 players (`set players N`, after a restart): each controller gets a player number by its device ids or display token, with its own GMsg queue and links on UDP 40000+2n / 40001+2n, kept in NVS `players`; slot 0's state stays in internal RAM, the others' in PSRAM. Xbox 360 and HID modes present one gamepad per player (endpoints 0x81, 0x85, 0x86, 0x87; Xbox with several pads uses 1209:0001 and one MS OS 2.0 `XUSB10` function per pad). Audio, mic and mode combos are player 1's. Pairing (`main/pair.c`, console `pair`): NimBLE on the P4 over ESP-Hosted VHCI to the C6's radio, the same exchange as `stadiacast-provision` (crypto window 1a, RSA PKCS#1 v1.5 password, connect JSON) with the hotspot's name and password. Console Controllers card. Host-tested with two fake controllers (`STADIA_PLAYERS=2`, `--device-id`); board test pending |
-| #24 | Pairing fixes from the first board test | the first try connected to another Fast Pair advertiser (phones and earbuds advertise 0xFE2C too) and failed; the second read the controller's 4.4 KB crypto window and then rebooted the board: `tinfl_decompress_mem_to_mem` keeps its 10.5 KB decompressor on the stack, more than the 8 KB pairing task had. The decompressor and the RSA buffers are now on the heap (task stack 12 KB), and the scan lists every candidate for 3 s, tries Stadia-named then strongest first, and skips a device without the setup service |
+| #23 | Several controllers and pairing on the dongle | up to 4 players (`set players N`, after a restart): each controller gets a player number by its device ids or display token, with its own GMsg queue and links on UDP 40000+2n / 40001+2n, kept in NVS `players`; slot 0's state stays in internal RAM, the others' in PSRAM. Xbox 360 and HID modes present one gamepad per player (endpoints 0x81, 0x85, 0x86, 0x87; Xbox with several pads uses 1209:0001 and one MS OS 2.0 `XUSB10` function per pad). Audio, mic and mode combos are player 1's. Pairing (`main/pair.c`, console `pair`): NimBLE on the P4 over ESP-Hosted VHCI to the C6's radio, the same exchange as `stadiacast-provision` (crypto window 1a, RSA PKCS#1 v1.5 password, connect JSON) with the hotspot's name and password. Console Controllers card. Host-tested with two fake controllers (`STADIA_PLAYERS=2`, `--device-id`); on the board with one real controller (see #24) |
+| #24 | Pairing fixes from the first board test | the first try connected to another Fast Pair advertiser (phones and earbuds advertise 0xFE2C too) and failed; the second read the controller's 4.4 KB crypto window and then rebooted the board: `tinfl_decompress_mem_to_mem` keeps its 10.5 KB decompressor on the stack, more than the 8 KB pairing task had. The decompressor and the RSA buffers are now on the heap (task stack 12 KB), and the scan lists every candidate for 3 s, tries Stadia-named then strongest first, and skips a device without the setup service. Board-tested 2026-11-16: found the controller, read its key, sent the credentials; the controller joined the hotspot and reached a game session about 20 s after pairing, with no off and wake |
 
 ## Things we learned the hard way
 
@@ -86,14 +90,21 @@ All merged into `main`.
 
 ## Known issues
 
-- Slight clipping on some loud songs. Likely fix: a few dB of headroom before the Opus encoder.
+- Slight clipping on some loud songs. Likely fix: a few dB of headroom before the Opus encoder
+  (the console's headphone gain).
+- Possible crackle in the headphones while the mic runs: with Assistant held the headphones'
+  stream has 1 to 3 underruns per 10 s (about 0 otherwise); the CPU is near its limit.
+- The microphone is untested on Windows.
+- Players 2 to 4 are untested with real controllers (one real controller so far; pairing is
+  tested with it).
+- The Opus bitrate setting has not had a listening test.
 - DualShock 4 and Switch Pro rumble, and Switch Pro mode on a real Switch, are untested.
-- Several controllers and on-board pairing are untested on the board (one real controller so far).
-- While Assistant is held (the microphone running), the headphones' stream has 1 to 3 underruns per 10 s (about 0 otherwise).
 
 ## Next
 
 1. Audio headroom for the clipping above, and fewer headphone underruns while the mic runs:
    the web console's gain and Opus complexity settings make both easy to try on the board.
-2. Try the microphone on Windows.
-3. Test the Switch Pro mode on a Switch, and rumble in DS4 and Switch modes.
+2. Listen to a few bitrates (for example 64, 96 and 128 kbps) and pick the default.
+3. Try the microphone on Windows.
+4. A second real controller for players 2 to 4.
+5. Test the Switch Pro mode on a Switch, and rumble in DS4 and Switch modes.
