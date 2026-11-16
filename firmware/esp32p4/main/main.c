@@ -148,6 +148,7 @@ void app_main(void)
 #if CONFIG_DONGLE_CONSOLE
     console_start(cfg.mic);
 #endif
+    ota_confirm_when_up();
     status_led_set(LED_WAITING);
     ESP_LOGI(TAG, "ready: wake the controller (about 1 s press of the Stadia button)");
 }

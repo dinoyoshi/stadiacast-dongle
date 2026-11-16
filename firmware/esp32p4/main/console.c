@@ -13,7 +13,8 @@
  *   {"t":"pad",...}       the controller's input as the host gets it, at most 20 times a second
  *   {"t":"ok"|"err",...}  the answer to a command
  *   anything else         the firmware's log, while "logs on"
- * From the host, a line each: hello | get | set <key> <value> | defaults | logs on|off | reboot
+ * From the host, a line each: hello | get | set <key> <value> | defaults | logs on|off | reboot |
+ *   ota [begin <size> <sha256>] (a firmware update: ota.c, which also sends {"t":"ota",...})
  *   keys: mode 0-3, gain -12..0 (dB before the Opus encoder), complexity 1-10,
  *   bitrate 32-160 (Opus kbit/s), mic 0/1 (after a
  *   restart), ptt 0/1 (push to talk)
@@ -422,6 +423,7 @@ static void handle(char *line)
     if (!strcmp(cmd, "hello")) {
         send_info();
         send_settings();
+        ota_send_status(sendf);
     } else if (!strcmp(cmd, "get")) {
         send_settings();
     } else if (!strcmp(cmd, "set")) {
@@ -444,6 +446,9 @@ static void handle(char *line)
         K.logs = v && (!strcmp(v, "on") || !strcmp(v, "1"));
         sendf("{\"t\":\"ok\",\"key\":\"logs\"}");
         send_settings();
+    } else if (!strcmp(cmd, "ota")) {
+        static char none[1];
+        ota_run(save ? save : none, sendf);
     } else if (!strcmp(cmd, "reboot")) {
         sendf("{\"t\":\"ok\",\"key\":\"reboot\",\"reconnect\":true}");
         vTaskDelay(pdMS_TO_TICKS(100));

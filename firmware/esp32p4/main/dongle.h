@@ -45,3 +45,13 @@ void console_pad(const usb_pad_state_t *st);
 /* Change the gamepad mode as the combos do (saved, the board leaves the bus and comes back).
  * False while a change is under way. */
 bool pad_mode_request(usb_pad_mode_t mode);
+
+/* Firmware updates over the console (ota.c). ota_run() handles the console's "ota" command: a
+ * whole update, after which the board restarts (it returns only when the update failed).
+ * send is the console's line printf. */
+void ota_run(char *args, void (*send)(const char *fmt, ...));
+/* {"t":"ota","state":"idle",...}: the slots, and whether this firmware is on trial. */
+void ota_send_status(void (*send)(const char *fmt, ...));
+/* A freshly updated image boots on trial: keep it once USB is up (else the bootloader rolls back
+ * at the next restart). Call once at start-up. */
+void ota_confirm_when_up(void);

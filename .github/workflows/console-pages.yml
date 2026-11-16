@@ -1,35 +1,110 @@
-# The dongle's web console (firmware/esp32p4/console/) on GitHub Pages.
+# The dongle's web console (firmware/esp32p4/console/) on GitHub Pages, with the firmware next to
+# it: the console's "Update firmware" card installs firmware/stadiacast-dongle.bin from the same
+# site (same origin, so no CORS), and firmware/stadiacast-dongle-full.bin is the whole flash for a
+# first install over the programming port.
 # One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
-name: Web console (GitHub Pages)
+# Pull requests only build the firmware, which checks that it compiles.
+name: Web console and firmware (GitHub Pages)
 
 on:
   push:
     branches: [main]
     paths:
-      - firmware/esp32p4/console/**
+      - firmware/esp32p4/**
+      - .github/workflows/console-pages.yml
+  pull_request:
+    paths:
+      - firmware/esp32p4/**
       - .github/workflows/console-pages.yml
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  deploy:
+  firmware:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # ESP-IDF 5.5.2 or later: earlier ones cannot build for the FireBeetle's v1.x P4
+    # (CONFIG_ESP32P4_SELECTS_REV_LESS_V3)
+    container: espressif/idf:v5.5.4
+    defaults:
+      run:
+        shell: bash
+        working-directory: firmware/esp32p4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive # libopus
+      - name: version
+        run: |
+          git config --global --add safe.directory '*'
+          version="$(date -u +%Y.%m.%d)-$(git rev-parse --short=7 HEAD)"
+          echo "$version" > version.txt # the app's version string (esp_app_desc_t.version)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: build
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py set-target esp32p4
+          idf.py build
+          idf.py merge-bin -o stadiacast-dongle-full.bin
+          echo "IDF=$(idf.py --version)" >> "$GITHUB_ENV"
+      - name: collect
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp build/stadiacast_dongle.bin "$GITHUB_WORKSPACE/out/stadiacast-dongle.bin"
+          cp build/stadiacast-dongle-full.bin "$GITHUB_WORKSPACE/out/stadiacast-dongle-full.bin"
+          cd "$GITHUB_WORKSPACE/out"
+          python3 - <<'PY'
+          import hashlib, json, os, datetime
+          def f(name):
+              d = open(name, "rb").read()
+              return {"file": name, "size": len(d), "sha256": hashlib.sha256(d).hexdigest()}
+          json.dump({
+              "version": os.environ["VERSION"],
+              "commit": os.environ["GITHUB_SHA"],
+              "built": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"),
+              "idf": os.environ.get("IDF", ""),
+              "app": f("stadiacast-dongle.bin"),
+              "full": f("stadiacast-dongle-full.bin"),
+          }, open("firmware.json", "w"), indent=1)
+          PY
+          cat firmware.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: out/
+          if-no-files-found: error
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: firmware
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: the console
+        run: cp -r firmware/esp32p4/console site
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: site/firmware
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: firmware/esp32p4/console
+          path: site
       - id: deployment
         uses: actions/deploy-pages@v4

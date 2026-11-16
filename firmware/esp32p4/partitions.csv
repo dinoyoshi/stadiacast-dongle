@@ -1,8 +1,12 @@
 # Name,   Type, SubType, Offset,   Size
-# nvs and phy_init stay where the single-app layout of steps 1-4 had them.
+# nvs and phy_init stay where the single-app layout of steps 1-4 had them, so the settings
+# survive the switch to this table.
 nvs,      data, nvs,     0x9000,   24K,
 phy_init, data, phy,     0xf000,   4K,
-factory,  app,  factory, 0x10000,  3M,
+# Two app slots for updates from the web console (main/ota.c): otadata says which one boots.
+otadata,  data, ota,     0x10000,  8K,
+ota_0,    app,  ota_0,   0x20000,  0x2F0000,
 # The C6's ESP-Hosted firmware (c6_fw/network_adapter.bin), which main/c6_update.c installs on
-# the C6 when it runs another version.
+# the C6 when it runs another version. Same offset as in the old table, so it stays in place.
 c6_fw,    data, 0x40,    0x310000, 2M,
+ota_1,    app,  ota_1,   0x510000, 0x2F0000,
