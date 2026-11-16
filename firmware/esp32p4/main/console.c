@@ -415,7 +415,7 @@ static void send_stats(void)
           "\"mic\":{\"pkts\":%u,\"muted\":%u,\"dec\":%u,\"lost\":%u,\"err\":%u,\"drop\":%u,\"peak\":%d,\"age\":%d,"
           "\"talk\":%s},"
           "\"usb\":{\"mode\":%d,\"mounted\":%s,\"play\":%s,\"rec\":%s,\"vol\":[%d,%d],\"mute\":[%s,%s],\"pkts\":%u,"
-          "\"fail\":%u,\"ovf\":%u,\"mpkts\":%u,\"munder\":%u,\"mskip\":%u,\"mdrop\":%u,\"mbuf\":%u,\"cdrop\":%u}}",
+          "\"fail\":%u,\"ovf\":%u,\"miss\":%u,\"mpkts\":%u,\"munder\":%u,\"mskip\":%u,\"mdrop\":%u,\"mbuf\":%u,\"cdrop\":%u}}",
           (long long)(esp_timer_get_time() / 1000), players, K.cpu[0], K.cpu[1],
           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
@@ -431,7 +431,7 @@ static void send_stats(void)
           s.mic_talking ? "true" : "false", (int)usb_pad_mode(), usb_pad_mounted() ? "true" : "false",
           u.playing ? "true" : "false", u.recording ? "true" : "false", u.volume[0], u.volume[1],
           u.mute[0] ? "true" : "false", u.mute[1] ? "true" : "false", (unsigned)u.packets, (unsigned)u.failed,
-          (unsigned)u.overflows, (unsigned)u.mic_packets, (unsigned)u.mic_underruns, (unsigned)u.mic_skips,
+          (unsigned)u.overflows, (unsigned)u.missed, (unsigned)u.mic_packets, (unsigned)u.mic_underruns, (unsigned)u.mic_skips,
           (unsigned)u.mic_dropped, (unsigned)u.mic_buffered, (unsigned)usb_console_dropped());
 }
 

@@ -924,7 +924,8 @@ function renderStats(m) {
   const und = rate((s) => s.audio.under);
   const und10 = und == null ? null : Math.round(und * 10);
   $("audUnder").innerHTML = und10 == null ? "–" : `<span class="${und10 ? (und10 > 2 ? "bad-t" : "warn-t") : ""}">${und10} per 10 s</span> <span class="sub">${a.under} total</span>`;
-  $("audTrim").textContent = `${a.trim} / ${a.lost}` + (u.ovf ? ` · ${u.ovf} USB overflows` : "");
+  const miss = rate((s) => s.usb.miss);
+  $("audTrim").textContent = `${a.trim} / ${a.lost}` + (u.ovf ? ` · ${u.ovf} USB overflows` : "") + (miss ? ` · ${Math.round(miss * 10)} USB packets missed per 10 s (filled in)` : "");
   const encN = prev ? m.audio.enc - prev.audio.enc : 0;
   const encAvg = encN > 0 ? (m.audio.enc_us - prev.audio.enc_us) / encN / 1000 : null;
   const cx = a.cplx_now ? a.cplx_now + (a.cplx_now < a.cplx ? " (mic on)" : "") : a.cplx; // older firmware: no cplx_now
@@ -1222,7 +1223,7 @@ function demoLink() {
         pings: [c.pings, c.pings], in: [c.ins, c.gaps, 0] },
       audio: { route: true, cplx: st.complexity, mcplx: st.mic_complexity, cplx_now: talk && st.mic_complexity < st.complexity ? st.mic_complexity : st.complexity, kbps: st.bitrate, enc: c.enc, sent: c.sent, lost: 0, trim: 2, under: c.under, resync: 0, bytes: c.bytes, enc_us: Math.round(c.enc_us), enc_max: 9800 },
       mic: { pkts: c.mpk, muted: 0, dec: c.mdec, lost: 3, err: 0, drop: 0, peak: talk ? 4000 + Math.round(Math.random() * 9000) : 0, age: talk ? 10 : 9000, talk },
-      usb: { mode: st.mode, mounted: true, play: true, rec: true, vol: [0, 0], mute: [false, false], pkts: tick * 8000, fail: 0, ovf: 0, mpkts: tick * 8000, munder: 1, mskip: 0, mdrop: 0, mbuf: 1900, cdrop: 0 } });
+      usb: { mode: st.mode, mounted: true, play: true, rec: true, vol: [0, 0], mute: [false, false], pkts: tick * 8000, fail: 0, ovf: 0, miss: tick * 4, mpkts: tick * 8000, munder: 1, mskip: 0, mdrop: 0, mbuf: 1900, cdrop: 0 } });
     if (tick % 2 === 0) emit({ t: "tasks", ms: 2000, list: [["audio", 312 + Math.round(Math.random() * 40), 6, 31000], ["rtc", 96, 5, 9100], ["mic", talk ? 180 : 4, 4, 30500], ["IDLE0", 420, 0, 800], ["IDLE1", 700, 0, 820], ["tiT", 38, 18, 2100], ["console", 6, 2, 3900], ["esp_timer", 9, 22, 2500], ["https", 2, 5, 5200], ["TinyUSB", 22, 5, 2600]] });
     const ang = tick / 3;
     emit({ t: "pad", p: 0, b: talk ? 0x1000 : 0, x: talk ? 2 : 0, lt: (tick * 40) % 255, rt: 0, lx: Math.round(Math.cos(ang) * 20000), ly: Math.round(Math.sin(ang) * 20000), rx: 0, ry: 0 });
