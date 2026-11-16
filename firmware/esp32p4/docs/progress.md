@@ -20,6 +20,7 @@ OTG port, as four kinds of controller, on Linux and Windows.
 | Controller modes: Xbox 360, DualShock 4, Switch Pro, HID | done | Linux; Steam sees DS4 as a PS4 controller |
 | C6 ESP-Hosted update from the P4 | done | board: 2.12.11 to 2.13.1 |
 | Headset microphone (the controller's headset as the PC's USB microphone) | done | Linux (PipeWire): voice recorded, no clipping, 0 packets lost |
+| Push to talk on the Assistant button | done | board: sound 15-50 ms after the press, stops 0.3 s after release; headphone underruns about 0 per 10 s while the mic is idle |
 
 Test rig: FireBeetle 2 ESP32-P4 with a v1.3 P4, C6 on ESP-Hosted 2.13.1, a Stadia Controller on
 Wi-Fi firmware build 316382, a Linux PC and a Windows PC.
@@ -41,6 +42,7 @@ All merged into `main`.
 | #10 | Controller modes | Stadia + A/B/X/Y for 1.5 s, or the BOOT button; saved in NVS |
 | #11 | Windows headset audio | Xbox+audio as 1209:0001 with an MS OS 2.0 `XUSB10` descriptor; UAC2 feature unit controls per channel |
 | #13 | Headset microphone | `DisplayToController` #5 true starts the controller's Opus mic stream (found by probing); UAC2 capture on iso IN 0x82 |
+| #14 | Push to talk on the Assistant button | #5 true on the press, #5 false 0.3 s after release; packets outside that are dropped |
 
 ## Things we learned the hard way
 
@@ -69,7 +71,7 @@ All merged into `main`.
 - Slight clipping on some loud songs. Likely fix: a few dB of headroom before the Opus encoder.
 - DualShock 4 and Switch Pro rumble, and Switch Pro mode on a real Switch, are untested.
 - One controller at a time.
-- With the microphone on, the headphones' stream has 3 to 6 underruns per 10 s (0 to 1 without).
+- While Assistant is held (the microphone running), the headphones' stream has 1 to 3 underruns per 10 s (about 0 otherwise).
 
 ## Next
 

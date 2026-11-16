@@ -12,6 +12,10 @@
  * for the callback, concealing up to MAX_PLC lost frames on a gap in the sequence numbers.
  * Every STATS_MS it logs what came in, and the loudest sample, so silence is told apart from
  * nothing.
+ *
+ * Push to talk (stadia_config_t.mic_push_to_talk): game.c reports the Assistant button through
+ * mic_set_talk(), and packets are only queued while it is held, plus TALK_TAIL_MS after it is
+ * let go so the last word is not cut off. rtc.c asks for the stream on the press.
  */
 #include "stadia_internal.h"
 
@@ -31,6 +35,7 @@ static const char *TAG = "mic";
 #define QUEUE_LEN 8
 #define MAX_PLC 3 /* lost frames concealed on a gap; a longer one is just skipped */
 #define STATS_MS 10000
+#define TALK_TAIL_MS 300
 
 typedef struct {
     uint16_t len;
@@ -45,7 +50,10 @@ static struct {
     pkt_t *q; /* QUEUE_LEN, on the heap */
     int head, count;
     uint32_t queued[2], overflow;
-    int64_t last_queued_ms;
+    int64_t last_rx_ms; /* the last packet received, queued or not */
+    uint32_t muted;     /* packets dropped while not talking */
+    bool talk_held;
+    int64_t talk_released_ms;
     port_event_t *ev;
     /* the callback */
     stadia_mic_cb_t cb;
@@ -76,7 +84,14 @@ void mic_on_rtp(rtc_link_t *L, int link, const uint8_t *rtp, size_t n)
     const uint8_t *payload;
     size_t plen;
     if (!M.q || !rtp_payload(rtp, n, &pt, &payload, &plen) || !plen || plen > MAX_PKT) return;
+    int64_t now = port_now_ms();
     port_lock();
+    M.last_rx_ms = now;
+    if (g_cfg.mic_push_to_talk && !M.talk_held && now - M.talk_released_ms >= TALK_TAIL_MS) {
+        M.muted++;
+        port_unlock();
+        return;
+    }
     if (M.count == QUEUE_LEN) { /* the decoder fell behind: the oldest goes */
         M.head = (M.head + 1) % QUEUE_LEN;
         M.count--;
@@ -90,7 +105,6 @@ void mic_on_rtp(rtc_link_t *L, int link, const uint8_t *rtp, size_t n)
     memcpy(p->data, payload, plen);
     M.count++;
     M.queued[link ? 1 : 0]++;
-    M.last_queued_ms = port_now_ms();
     port_unlock();
     port_event_set(M.ev);
 }
@@ -169,9 +183,11 @@ static void stats(void)
     if (!M.stats_at) M.stats_at = now;
     if (now - M.stats_at < STATS_MS) return;
     port_lock();
-    uint32_t d = M.queued[0], g = M.queued[1], over = M.overflow;
-    M.queued[0] = M.queued[1] = M.overflow = 0;
+    uint32_t d = M.queued[0], g = M.queued[1], over = M.overflow, muted = M.muted;
+    M.queued[0] = M.queued[1] = M.overflow = M.muted = 0;
     port_unlock();
+    if (muted) SLOGI(TAG, "%u packets muted in %d s (push to talk: Assistant not held)", (unsigned)muted,
+                     (int)((now - M.stats_at) / 1000));
     if (d || g || M.errors) {
         int db = M.peak ? (int)lroundf(20.0f * log10f(M.peak / 32768.0f)) : -96;
         SLOGI(TAG, "%u packets in %d s (display %u, game %u), %u decoded, %u lost, %u errors, %u dropped; %u ms of "
@@ -218,9 +234,44 @@ static void mic_task(void *arg)
 int64_t mic_last_packet_ms(void)
 {
     port_lock();
-    int64_t t = M.last_queued_ms;
+    int64_t t = M.last_rx_ms;
     port_unlock();
     return t;
+}
+
+void mic_set_talk(bool held)
+{
+    port_lock();
+    bool was = M.talk_held;
+    M.talk_held = held;
+    if (was && !held) M.talk_released_ms = port_now_ms();
+    port_unlock();
+    if (g_cfg.mic_push_to_talk && was != held) SLOGI(TAG, "push to talk: %s", held ? "talking" : "released");
+}
+
+void stadia_mic_set_push_to_talk(bool on)
+{
+    port_lock();
+    bool was = g_cfg.mic_push_to_talk;
+    g_cfg.mic_push_to_talk = on;
+    port_unlock();
+    if (was != on) SLOGI(TAG, "push to talk %s", on ? "on" : "off");
+}
+
+bool stadia_mic_push_to_talk(void)
+{
+    port_lock();
+    bool on = g_cfg.mic_push_to_talk;
+    port_unlock();
+    return on;
+}
+
+bool mic_talking(void)
+{
+    port_lock();
+    bool on = M.talk_held || (M.talk_released_ms && port_now_ms() - M.talk_released_ms < TALK_TAIL_MS);
+    port_unlock();
+    return on;
 }
 
 bool mic_init(void)

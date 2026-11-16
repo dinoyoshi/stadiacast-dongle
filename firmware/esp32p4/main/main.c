@@ -126,6 +126,9 @@ void app_main(void)
 #if CONFIG_DONGLE_USB_MIC
         .mic = true,
 #endif
+#if CONFIG_DONGLE_MIC_PUSH_TO_TALK
+        .mic_push_to_talk = true,
+#endif
     };
     if (!stadia_start(&cfg)) {
         ESP_LOGE(TAG, "a server did not start, see above");
