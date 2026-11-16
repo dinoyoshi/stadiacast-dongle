@@ -105,3 +105,7 @@ example for each piece. A new board needs:
 link, slots, Bluetooth with a fake controller in setup mode): a quick way to see what each call
 is expected to do. Run it, `gamepad_test` and `run_loopback.sh` after any change to the core.
 
+Working with an AI coding agent? [AGENTS.md](../AGENTS.md) has the layout, the build and test
+commands and the rules learned on the board, and [.claude/skills/port-board/SKILL.md](../.claude/skills/port-board/SKILL.md)
+is this section as a step-by-step porting checklist an agent can follow.
+
