@@ -111,6 +111,9 @@ dl.kv dt { color: var(--text-2); }
 dl.kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weight: 550; min-width: 0; overflow-wrap: anywhere; }
 dl.kv dd .sub { color: var(--text-3); font-weight: 400; }
 .good-t { color: var(--good); } .warn-t { color: var(--warn); } .bad-t { color: var(--bad); }
+.batt { display: inline-block; width: 26px; height: 11px; border: 1.5px solid currentColor; border-radius: 3px; padding: 1px; vertical-align: -1px; margin-right: 6px; position: relative; }
+.batt::after { content: ""; position: absolute; right: -4px; top: 2.5px; width: 2px; height: 4px; background: currentColor; border-radius: 0 1px 1px 0; }
+.batt i { display: block; height: 100%; background: currentColor; border-radius: 1px; }
 .spark { margin-top: 12px; }
 .spark .lbl { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); }
 .spark .lbl b { color: var(--text); font-variant-numeric: tabular-nums; }
@@ -215,10 +218,15 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
         <dl class="kv">
           <dt>Session</dt><dd id="ctlState">–</dd>
           <dt>Game link</dt><dd id="ctlGame">–</dd>
+          <dt>Battery</dt><dd id="ctlBat">–</dd>
+          <dt>Connection</dt><dd id="ctlQual">–</dd>
           <dt>Wi-Fi signal</dt><dd id="ctlRssi">–</dd>
+          <dt>Round trip</dt><dd id="ctlPing">–</dd>
+          <dt>Input lost</dt><dd id="ctlLoss">–</dd>
           <dt>Hotspot</dt><dd id="ctlSsid">–</dd>
         </dl>
         <div class="spark" id="spRssi"></div>
+        <div class="spark" id="spPing"></div>
       </section>
 
       <section class="card">
@@ -392,7 +400,8 @@ let link = null;          // {send(line), close()}
 let wantConnected = false;
 let info = null, settings = null, prev = null, prevAt = 0;
 const HIST = 60;
-const hist = { rssi: [], under: [], peak: [], cpu0: [], cpu1: [] };
+const hist = { rssi: [], ping: [], under: [], peak: [], cpu0: [], cpu1: [] };
+const linkHist = []; // the link counters of each stats line, for the last minute's loss
 
 function toast(msg) {
   const t = $("toast");
@@ -516,6 +525,7 @@ function onOpened() {
   $("intro").hidden = true;
   $("dash").hidden = false;
   prev = null;
+  linkHist.length = 0;
   link.send("hello");
   if ($("logOn").checked) link.send("logs on");
 }
@@ -701,6 +711,55 @@ function sparkHover(host, e) {
 }
 function push(arr, v) { arr.push(v); if (arr.length > HIST) arr.shift(); }
 
+/* battery and connection quality (older firmware sends no such fields) */
+const grade = (v, good, fair, higherBetter) => v == null ? 0 :
+  higherBetter ? (v >= good ? 1 : v >= fair ? 2 : 3) : (v <= good ? 1 : v <= fair ? 2 : 3);
+const GRADE_CLS = ["", "good-t", "warn-t", "bad-t"];
+function fmtAgo(s) {
+  return s < 60 ? "just now" : s < 3600 ? Math.round(s / 60) + " min ago" : (s / 3600).toFixed(1) + " h ago";
+}
+function renderLink(c, up) {
+  const has = c.bat !== undefined;
+  // battery: the controller's first reading comes a few minutes after it connects
+  if (!has) $("ctlBat").innerHTML = '<span class="sub">update the firmware</span>';
+  else if (c.bat == null) $("ctlBat").innerHTML = `<span class="sub">${c.disp ? "first reading in a few minutes" : "–"}</span>`;
+  else {
+    const g = c.bat <= 15 ? 3 : c.bat <= 30 ? 2 : 1;
+    $("ctlBat").innerHTML = `<span class="${GRADE_CLS[g]}"><span class="batt"><i style="width:${Math.max(4, c.bat)}%"></i></span>${c.bat}%</span>` +
+      ` <span class="sub">${c.disp ? fmtAgo(c.bat_age) : "last seen " + fmtAgo(c.bat_age)}</span>`;
+  }
+  if (!has) { ["ctlQual", "ctlPing", "ctlLoss"].forEach((id) => ($(id).textContent = "–")); return; }
+
+  // round trip of the keepalive checks (every 2.5 s per link): the game link's, else the display's
+  const us = c.ping[1] ?? c.ping[0];
+  const ms = us == null ? null : us / 1000;
+  const gPing = grade(ms, 20, 60);
+  $("ctlPing").innerHTML = ms == null ? '<span class="sub">–</span>' :
+    `<span class="${GRADE_CLS[gPing]}">${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms</span>` +
+    (c.ping[0] != null && c.ping[1] != null ? ` <span class="sub">display ${(c.ping[0] / 1000).toFixed(0)} ms</span>` : "");
+  push(hist.ping, ms == null ? null : Math.round(ms * 10) / 10);
+  spark("spPing", "Round trip, last minute", hist.ping, " ms", { min: 0, minSpan: 20 });
+
+  // loss over the last minute: input series the controller numbered but never arrived, and
+  // keepalive checks without an answer
+  linkHist.push({ up, ps: c.pings[0], pa: c.pings[1], n: c.in[0], gap: c.in[1] });
+  while (linkHist.length > 1 && up - linkHist[0].up > 60000) linkHist.shift();
+  const a = linkHist[0], b = linkHist[linkHist.length - 1];
+  const got = b.n - a.n, gaps = b.gap - a.gap, sent = b.ps - a.ps, unanswered = sent - (b.pa - a.pa);
+  const lossPct = got + gaps > 0 ? gaps / (got + gaps) * 100 : null;
+  const pingLoss = sent > 0 ? Math.max(0, unanswered) / sent * 100 : null;
+  const gLoss = Math.max(grade(lossPct, 1, 5), grade(pingLoss, 0, 20));
+  const lossTxt = lossPct == null ? "–" : (lossPct === 0 ? "0" : lossPct < 0.1 ? "<0.1" : lossPct.toFixed(1)) + "%";
+  $("ctlLoss").innerHTML = lossPct == null && pingLoss == null ? '<span class="sub">–</span>' :
+    `<span class="${GRADE_CLS[gLoss]}">${lossTxt}</span> <span class="sub">${gaps} of ${got + gaps} in the last minute` +
+    (unanswered > 0 ? ` · ${unanswered} of ${sent} pings lost` : "") + "</span>";
+
+  // one verdict: the worst of signal, round trip and loss
+  const live = c.disp || c.game;
+  const worst = live ? Math.max(grade(c.rssi, -60, -72, true), gPing, gLoss) : 0;
+  $("ctlQual").innerHTML = worst ? `<span class="${GRADE_CLS[worst]}">${["", "Good", "Fair", "Poor"][worst]}</span>` : '<span class="sub">–</span>';
+}
+
 function renderStats(m) {
   const now = performance.now();
   const dt = prev ? Math.max(0.2, (m.up - prev.up) / 1000) : null;
@@ -718,6 +777,7 @@ function renderStats(m) {
     `<span class="${rssi >= -60 ? "good-t" : rssi >= -72 ? "warn-t" : "bad-t"}">${rssi} dBm</span> <span class="sub">${rssi >= -60 ? "good" : rssi >= -72 ? "fair" : "weak"}</span>`;
   push(hist.rssi, rssi);
   spark("spRssi", "Signal, last minute", hist.rssi, " dBm", { min: -95, max: -30 });
+  renderLink(c, m.up);
 
   // headphones
   const a = m.audio, u = m.usb;
@@ -825,19 +885,23 @@ function demoLink() {
   const st = { mode: 0, gain: 0, complexity: 8, bitrate: 96, mic: true, mic_running: true, ptt: true, rumble: true, rumble_left: 100, rumble_right: 100, logs: false };
   let rmbTimer = null;
   const rmbOut = (l, r, test) => emit({ t: "rumble", out: st.rumble ? [Math.min(65535, Math.round(l * 257 * st.rumble_left / 100)), Math.min(65535, Math.round(r * 257 * st.rumble_right / 100))] : [0, 0], host: [0, 0], test });
-  const c = { up: 734000, sent: 0, bytes: 0, under: 0, enc: 0, enc_us: 0, mpk: 0, mdec: 0, upk: 0, mupk: 0 };
+  const c = { up: 734000, sent: 0, bytes: 0, under: 0, enc: 0, enc_us: 0, mpk: 0, mdec: 0, upk: 0, mupk: 0, pings: 0, ins: 0, gaps: 0 };
   const emit = (o) => setTimeout(() => onLine(JSON.stringify(o)), 30);
   const sendSettings = () => emit({ t: "settings", ...st });
   let tick = 0;
   const timer = setInterval(() => {
     tick++;
     c.up += 1000;
+    if (tick % 5 === 0) c.pings += 2;
+    c.ins += 60 + Math.round(Math.random() * 60); if (Math.random() < 0.08) c.gaps += 1;
     const talk = tick % 12 < 4;
     c.sent += 50; c.bytes += 50 * st.bitrate * 2.5; c.enc += 50; c.enc_us += 50 * (st.complexity * 750 + Math.random() * 1500);
     if (talk && Math.random() < 0.35) c.under += 1;
     if (talk || !st.ptt) { c.mpk += 50; c.mdec += 50; }
     emit({ t: "stats", up: c.up, cpu: [Math.round(38 + Math.random() * 10 + (talk ? 20 : 0)), Math.round(22 + Math.random() * 8)], heap: [61440 + Math.round(Math.random() * 900), 48210, 31.2e6],
-      ctl: { state: "input", disp: true, game: true, rssi: Math.round(-52 - Math.random() * 6), sta: 1 },
+      ctl: { state: "input", disp: true, game: true, rssi: Math.round(-52 - Math.random() * 6), sta: 1,
+        bat: 76 - Math.floor(tick / 240), bat_age: 95 + tick % 240, ping: [3800 + Math.round(Math.random() * 4000), 3100 + Math.round(Math.random() * 5000)],
+        pings: [c.pings, c.pings], in: [c.ins, c.gaps, 0] },
       audio: { route: true, cplx: st.complexity, kbps: st.bitrate, enc: c.enc, sent: c.sent, lost: 0, trim: 2, under: c.under, resync: 0, bytes: c.bytes, enc_us: Math.round(c.enc_us), enc_max: 9800 },
       mic: { pkts: c.mpk, muted: 0, dec: c.mdec, lost: 3, err: 0, drop: 0, peak: talk ? 4000 + Math.round(Math.random() * 9000) : 0, age: talk ? 10 : 9000, talk },
       usb: { mode: st.mode, mounted: true, play: true, rec: true, vol: [0, 0], mute: [false, false], pkts: tick * 8000, fail: 0, ovf: 0, mpkts: tick * 8000, munder: 1, mskip: 0, mdrop: 0, mbuf: 1900, cdrop: 0 } });

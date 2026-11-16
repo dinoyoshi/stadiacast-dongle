@@ -76,6 +76,12 @@ struct rtc_link {
     uint32_t media_in, rtcp_in, srtp_fail, stray_logged;
     int64_t dtls_at;
     int64_t last_rx; /* the last datagram from the selected peer */
+    /* link quality: the round trip of our keepalive checks once DTLS is up (written by the
+     * link's task, read as a snapshot by stadia_get_stats) */
+    uint8_t ping_txid[12];
+    int64_t ping_sent_us; /* 0: no check outstanding */
+    uint32_t pings_sent, pings_answered;
+    int32_t ping_us; /* the latest round trip, -1 before any on this session */
     /* our RTP stream (input acks, rumble) */
     uint16_t tx_seq;
     uint32_t ssrc;
