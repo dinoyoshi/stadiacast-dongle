@@ -45,7 +45,7 @@ All merged into `main`.
 | #13 | Headset microphone | `DisplayToController` #5 true starts the controller's Opus mic stream (found by probing); UAC2 capture on iso IN 0x82 |
 | #14 | Push to talk on the Assistant button | #5 true on the press, #5 false 0.3 s after release; packets outside that are dropped |
 | #15 | Web console | CDC ACM serial port next to the gamepad in every mode; JSON lines with stats once a second; settings for mode, headphone gain, Opus complexity, mic, push to talk; static page in `console/`, deployed to GitHub Pages |
-| #16 | TLS buffers in PSRAM | `MBEDTLS_EXTERNAL_MEM_ALLOC`; boots and reaches ready on the board. Running code from PSRAM (`SPIRAM_XIP_FROM_PSRAM`) was tried and dropped: it boot-loops a v1.3 P4 |
+| #16 | TLS buffers in PSRAM, faster flash | `MBEDTLS_EXTERNAL_MEM_ALLOC` (boots and reaches ready on the board); flash at QIO 80 MHz instead of DIO 40 MHz, aimed at the headphone underruns while the mic runs (board test pending). Running code from PSRAM (`SPIRAM_XIP_FROM_PSRAM`) was tried and dropped: it boot-loops a v1.3 P4 |
 
 ## Things we learned the hard way
 
