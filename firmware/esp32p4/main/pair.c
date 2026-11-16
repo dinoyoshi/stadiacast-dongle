@@ -7,7 +7,9 @@
  * A controller in setup mode (its light pulses orange: never set up, or turned off and then
  * started with Y held while pressing the Stadia button) advertises Fast Pair service data
  * (0xFE2C). The dongle
- *   1. scans for it (up to PAIR_SCAN_MS) and connects to the first one it hears,
+ *   1. scans for it (up to PAIR_SCAN_MS) and connects to the likeliest device it hears (named
+ *      Stadia, then the strongest signal); phones and earbuds advertise Fast Pair too, so a device
+ *      without the setup service is skipped and the next one tried,
  *   2. reads the controller's RSA public key from the crypto window (pair 1a: page index to the
  *      control characteristic, then a long read of the data characteristic, 512 bytes a page,
  *      gzip-compressed JSON {"device_info": {"public_key": <base64 SubjectPublicKeyInfo>}}),
@@ -33,6 +35,7 @@
 #include "esp_heap_caps.h"
 #include "esp_hosted.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -53,7 +56,8 @@
 
 static const char *TAG = "pair";
 
-#define PAIR_SCAN_MS 60000
+#define PAIR_SCAN_MS 60000   /* for finding a controller, all tries together */
+#define PAIR_CONNECT_MS 10000
 #define PAIR_OP_MS 10000     /* one GATT operation */
 #define PAIR_WAIT_MS 45000   /* for the controller's verdict after the credentials */
 #define WINDOW_PAGE 512
@@ -106,6 +110,28 @@ static struct {
     char msg[160];
     volatile uint32_t gen; /* bumped on every change */
 } P = {.conn = BLE_HS_CONN_HANDLE_NONE, .state = "idle", .setup_state = -1, .verdict = -1};
+
+/* What a scan heard, and what the flow already tried this pairing. */
+#define MAX_CAND 12
+#define MAX_TRIES 2      /* connection attempts per device */
+#define SCAN_SETTLE_MS 3000 /* keep listening this long after the first match */
+typedef struct {
+    ble_addr_t addr;
+    int rssi;
+    bool named; /* its name says Stadia */
+    char name[32];
+} cand_t;
+static struct {
+    cand_t c[MAX_CAND];
+    volatile int n;
+    volatile bool done; /* the scan ended by itself */
+    struct {
+        ble_addr_t addr;
+        uint8_t tries;
+        bool not_controller; /* connected, no setup service */
+    } t[MAX_CAND];
+    int nt;
+} S;
 
 /* ---- status ------------------------------------------------------------------------- */
 
@@ -201,28 +227,38 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
 {
     switch (ev->type) {
     case BLE_GAP_EVENT_DISC: {
-        if (P.found) return 0;
+        /* Phones, earbuds and other Google devices advertise Fast Pair (0xFE2C) too: every match
+         * is a candidate, tried likeliest first (pick_candidate). */
         struct ble_hs_adv_fields f;
         if (ble_hs_adv_parse_fields(&f, ev->disc.data, ev->disc.length_data) != 0 || !is_setup_mode(&f)) return 0;
         xSemaphoreTake(P.lock, portMAX_DELAY);
-        P.addr = ev->disc.addr;
-        P.rssi = ev->disc.rssi;
-        size_t len = f.name && f.name_len ? (f.name_len < sizeof(P.name) - 1 ? f.name_len : sizeof(P.name) - 1) : 0;
-        if (len) {
-            memcpy(P.name, f.name, len);
-            P.name[len] = 0;
-        } else {
-            snprintf(P.name, sizeof(P.name), "%02x:%02x:%02x:%02x:%02x:%02x", P.addr.val[5], P.addr.val[4],
-                     P.addr.val[3], P.addr.val[2], P.addr.val[1], P.addr.val[0]);
+        cand_t *c = NULL;
+        for (int i = 0; i < S.n; i++) {
+            if (ble_addr_cmp(&S.c[i].addr, &ev->disc.addr) == 0) c = &S.c[i];
         }
-        P.found = true;
+        if (!c && S.n < MAX_CAND) {
+            c = &S.c[S.n++];
+            memset(c, 0, sizeof(*c));
+            c->addr = ev->disc.addr;
+            snprintf(c->name, sizeof(c->name), "%02x:%02x:%02x:%02x:%02x:%02x", c->addr.val[5], c->addr.val[4],
+                     c->addr.val[3], c->addr.val[2], c->addr.val[1], c->addr.val[0]);
+        }
+        if (c) {
+            c->rssi = ev->disc.rssi;
+            if (f.name && f.name_len) {
+                size_t len = f.name_len < sizeof(c->name) - 1 ? f.name_len : sizeof(c->name) - 1;
+                memcpy(c->name, f.name, len);
+                c->name[len] = 0;
+                char low[sizeof(c->name)];
+                for (size_t i = 0; i <= len; i++) low[i] = (char)(c->name[i] ? c->name[i] | 0x20 : 0);
+                c->named = strstr(low, "stadia") != NULL;
+            }
+        }
         xSemaphoreGive(P.lock);
-        ble_gap_disc_cancel(); /* no DISC_COMPLETE after a cancel */
-        op_done(0);
         return 0;
     }
     case BLE_GAP_EVENT_DISC_COMPLETE:
-        op_done(BLE_HS_ETIMEOUT);
+        S.done = true;
         return 0;
     case BLE_GAP_EVENT_CONNECT:
         if (ev->connect.status == 0) P.conn = ev->connect.conn_handle;
@@ -344,12 +380,25 @@ static char *ungzip(const uint8_t *d, size_t n)
             free(out);
             return NULL;
         }
-        size_t r = tinfl_decompress_mem_to_mem(out, KEY_JSON_MAX, d + p, n - p, 0);
-        if (r == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED) {
+        /* The decompressor is about 10.5 KB: on the heap, never the task's stack
+         * (tinfl_decompress_mem_to_mem keeps it on the stack and overflowed the pairing task). */
+        tinfl_decompressor *dec = heap_caps_malloc(sizeof(*dec), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!dec) dec = malloc(sizeof(*dec));
+        if (!dec) {
             free(out);
             return NULL;
         }
-        out[r] = 0;
+        tinfl_init(dec);
+        size_t in_len = n - p, out_len = KEY_JSON_MAX;
+        tinfl_status st = tinfl_decompress(dec, d + p, &in_len, (mz_uint8 *)out, (mz_uint8 *)out, &out_len,
+                                           TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+        free(dec);
+        if (st != TINFL_STATUS_DONE) {
+            ESP_LOGW(TAG, "the crypto window did not unpack (%d)", (int)st);
+            free(out);
+            return NULL;
+        }
+        out[out_len] = 0;
     } else {
         size_t r = n < KEY_JSON_MAX ? n : KEY_JSON_MAX;
         memcpy(out, d, r);
@@ -370,33 +419,46 @@ static bool encrypt_password(const char *bundle_json, char *out, size_t cap)
         cJSON_Delete(root);
         return false;
     }
-    uint8_t der[1024], ct[512];
+    /* buffers and contexts on the heap: the entropy context alone is over 1 KB */
+    struct {
+        uint8_t der[1024], ct[512];
+        mbedtls_pk_context pk;
+        mbedtls_entropy_context ent;
+        mbedtls_ctr_drbg_context drbg;
+    } *w = calloc(1, sizeof(*w));
+    if (!w) {
+        cJSON_Delete(root);
+        return false;
+    }
+    uint8_t *der = w->der, *ct = w->ct;
+    mbedtls_pk_context *pk = &w->pk;
+    mbedtls_entropy_context *ent = &w->ent;
+    mbedtls_ctr_drbg_context *drbg = &w->drbg;
     size_t der_len = 0, ct_len = 0, b64_len = 0;
-    mbedtls_pk_context pk;
-    mbedtls_entropy_context ent;
-    mbedtls_ctr_drbg_context drbg;
-    mbedtls_pk_init(&pk);
-    mbedtls_entropy_init(&ent);
-    mbedtls_ctr_drbg_init(&drbg);
+    mbedtls_pk_init(pk);
+    mbedtls_entropy_init(ent);
+    mbedtls_ctr_drbg_init(drbg);
     const char *pw = CONFIG_DONGLE_PASSWORD;
-    int rc = mbedtls_base64_decode(der, sizeof(der), &der_len, (const uint8_t *)key->valuestring, strlen(key->valuestring));
-    if (rc == 0) rc = mbedtls_pk_parse_public_key(&pk, der, der_len);
-    if (rc == 0 && mbedtls_pk_get_type(&pk) != MBEDTLS_PK_RSA) rc = -1;
-    if (rc == 0) rc = mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &ent, (const uint8_t *)"pair", 4);
+    int rc = mbedtls_base64_decode(der, sizeof(w->der), &der_len, (const uint8_t *)key->valuestring,
+                                   strlen(key->valuestring));
+    if (rc == 0) rc = mbedtls_pk_parse_public_key(pk, der, der_len);
+    if (rc == 0 && mbedtls_pk_get_type(pk) != MBEDTLS_PK_RSA) rc = -1;
+    if (rc == 0) rc = mbedtls_ctr_drbg_seed(drbg, mbedtls_entropy_func, ent, (const uint8_t *)"pair", 4);
     if (rc == 0) {
-        rc = mbedtls_pk_encrypt(&pk, (const uint8_t *)pw, strlen(pw), ct, &ct_len, sizeof(ct), mbedtls_ctr_drbg_random,
-                                &drbg);
+        rc = mbedtls_pk_encrypt(pk, (const uint8_t *)pw, strlen(pw), ct, &ct_len, sizeof(w->ct),
+                                mbedtls_ctr_drbg_random, drbg);
     }
     if (rc == 0) rc = mbedtls_base64_encode((uint8_t *)out, cap, &b64_len, ct, ct_len);
     if (rc == 0) {
-        ESP_LOGI(TAG, "controller key: RSA %u bits", (unsigned)mbedtls_pk_get_bitlen(&pk));
+        ESP_LOGI(TAG, "controller key: RSA %u bits", (unsigned)mbedtls_pk_get_bitlen(pk));
         ok = true;
     } else {
         ESP_LOGW(TAG, "the controller's key could not be used: -0x%04x", (unsigned)-rc);
     }
-    mbedtls_pk_free(&pk);
-    mbedtls_ctr_drbg_free(&drbg);
-    mbedtls_entropy_free(&ent);
+    mbedtls_pk_free(pk);
+    mbedtls_ctr_drbg_free(drbg);
+    mbedtls_entropy_free(ent);
+    free(w);
     cJSON_Delete(root);
     return ok;
 }
@@ -411,44 +473,146 @@ static void disconnect(void)
     }
 }
 
-/* Returns NULL when the controller has the credentials, else why not. */
-static const char *pair_run(void)
+static int64_t now_ms(void)
 {
-    /* 1. find a controller in setup mode */
-    P.found = false;
-    xSemaphoreTake(P.op, 0);
-    set_status("scanning", "looking for a controller in setup mode (light pulsing orange)");
-    struct ble_gap_disc_params dp = {.passive = 0, .filter_duplicates = 1};
-    if (ble_gap_disc(P.own_addr_type, PAIR_SCAN_MS, &dp, gap_event, NULL) != 0) return "Bluetooth scan did not start";
-    int rc = op_wait(PAIR_SCAN_MS + 2000);
-    if (P.cancel) return "cancelled";
-    if (!P.found) {
-        ble_gap_disc_cancel();
-        return "no controller in setup mode found within 60 s: is its light pulsing orange?";
-    }
+    return esp_timer_get_time() / 1000;
+}
 
-    /* 2. connect, MTU, characteristics */
+/* This pairing's record of a device: how often it was tried, whether it is no controller. */
+static int tried_index(const ble_addr_t *a, bool add)
+{
+    for (int i = 0; i < S.nt; i++) {
+        if (ble_addr_cmp(&S.t[i].addr, a) == 0) return i;
+    }
+    if (!add || S.nt >= MAX_CAND) return -1;
+    S.t[S.nt].addr = *a;
+    S.t[S.nt].tries = 0;
+    S.t[S.nt].not_controller = false;
+    return S.nt++;
+}
+
+static bool usable(const cand_t *c)
+{
+    int i = tried_index(&c->addr, false);
+    return i < 0 || (!S.t[i].not_controller && S.t[i].tries < MAX_TRIES);
+}
+
+/* The likeliest candidate: named Stadia first, then the strongest signal; -1 for none. */
+static int pick_candidate(void)
+{
+    int best = -1;
+    for (int i = 0; i < S.n; i++) {
+        if (!usable(&S.c[i])) continue;
+        if (best < 0 || S.c[i].named > S.c[best].named ||
+            (S.c[i].named == S.c[best].named && S.c[i].rssi > S.c[best].rssi)) {
+            best = i;
+        }
+    }
+    return best;
+}
+
+/* Scan until something usable has been heard (then a little longer, to hear the rest), the scan
+ * ends, or `until`. The chosen candidate's index, or -1. */
+static int scan_round(int64_t until)
+{
+    xSemaphoreTake(P.lock, portMAX_DELAY);
+    S.n = 0;
+    S.done = false;
+    xSemaphoreGive(P.lock);
+    int64_t left = until - now_ms();
+    if (left < 1000) return -1;
+    struct ble_gap_disc_params dp = {.passive = 0, .filter_duplicates = 0};
+    if (ble_gap_disc(P.own_addr_type, (int32_t)left, &dp, gap_event, NULL) != 0) return -1;
+    int64_t settle = 0;
+    while (!P.cancel && !S.done && now_ms() < until) {
+        xSemaphoreTake(P.lock, portMAX_DELAY);
+        bool any = pick_candidate() >= 0;
+        xSemaphoreGive(P.lock);
+        if (any && !settle) settle = now_ms() + SCAN_SETTLE_MS;
+        if (settle && now_ms() >= settle) break;
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (!S.done) ble_gap_disc_cancel();
+    vTaskDelay(pdMS_TO_TICKS(100)); /* let the scan wind down */
+    xSemaphoreTake(P.lock, portMAX_DELAY);
+    int i = pick_candidate();
+    if (i >= 0) {
+        for (int k = 0; k < S.n; k++) {
+            ESP_LOGI(TAG, "heard %s (%d dBm)%s", S.c[k].name, S.c[k].rssi, S.c[k].named ? ", named Stadia" : "");
+        }
+        P.addr = S.c[i].addr;
+        P.rssi = S.c[i].rssi;
+        snprintf(P.name, sizeof(P.name), "%s", S.c[i].name);
+        P.found = true;
+    }
+    xSemaphoreGive(P.lock);
+    return i;
+}
+
+/* Connect to P.addr and find the setup service. NULL when it is a controller in setup mode. */
+static const char *connect_setup(bool *not_controller)
+{
+    *not_controller = false;
     set_status("connecting", "found %s (%d dBm), connecting", P.name, P.rssi);
     P.dropped = false;
     P.conn = BLE_HS_CONN_HANDLE_NONE;
-    vTaskDelay(pdMS_TO_TICKS(100)); /* let the scan wind down */
-    xSemaphoreTake(P.op, 0);
-    if (ble_gap_connect(P.own_addr_type, &P.addr, 30000, NULL, gap_event, NULL) != 0) return "could not connect";
-    rc = op_wait(32000);
-    if (rc != 0 || P.conn == BLE_HS_CONN_HANDLE_NONE) return "the connection failed: try again";
+    op_begin();
+    if (ble_gap_connect(P.own_addr_type, &P.addr, PAIR_CONNECT_MS, NULL, gap_event, NULL) != 0) {
+        return "could not connect";
+    }
+    int rc = op_wait(PAIR_CONNECT_MS + 2000);
+    if (rc != 0 || P.conn == BLE_HS_CONN_HANDLE_NONE) {
+        if (P.conn == BLE_HS_CONN_HANDLE_NONE) ble_gap_conn_cancel();
+        return "the connection failed";
+    }
     P.mtu = 23;
     op_begin();
     if (ble_gattc_exchange_mtu(P.conn, on_mtu, NULL) == 0) op_wait(PAIR_OP_MS);
     memset(P.handle, 0, sizeof(P.handle));
     op_begin();
     if (ble_gattc_disc_all_chrs(P.conn, 1, 0xFFFF, on_chr, NULL) != 0 || op_wait(PAIR_OP_MS * 2) != 0) {
-        return "the controller's setup service could not be read";
+        return "its services could not be read";
     }
     for (int i = 0; i < CH_COUNT; i++) {
         if (!P.handle[i]) {
-            ESP_LOGW(TAG, "characteristic %s missing", CH_UUIDS[i]);
-            return "this is not a Stadia controller's setup service";
+            ESP_LOGW(TAG, "%s: characteristic %s missing: not a controller in setup mode", P.name, CH_UUIDS[i]);
+            *not_controller = true;
+            return "not a Stadia controller in setup mode";
         }
+    }
+    return NULL;
+}
+
+/* Returns NULL when the controller has the credentials, else why not. */
+static const char *pair_run(void)
+{
+    /* 1 and 2. find a controller in setup mode and connect to it, trying the candidates in turn */
+    static char why[160];
+    int rc;
+    P.found = false;
+    S.nt = 0;
+    int64_t until = now_ms() + PAIR_SCAN_MS;
+    const char *last = NULL;
+    for (;;) {
+        if (P.cancel) return "cancelled";
+        set_status("scanning", "looking for a controller in setup mode (light pulsing orange)");
+        int i = scan_round(until);
+        if (P.cancel) return "cancelled";
+        if (i < 0) {
+            if (!last) return "no controller in setup mode found within 60 s: is its light pulsing orange?";
+            snprintf(why, sizeof(why), "no controller in setup mode answered within 60 s (last: %s): is its light "
+                     "pulsing orange? Try again", last);
+            return why;
+        }
+        int t = tried_index(&P.addr, true);
+        if (t >= 0) S.t[t].tries++;
+        bool not_controller = false;
+        last = connect_setup(&not_controller);
+        if (!last) break;
+        if (t >= 0 && not_controller) S.t[t].not_controller = true;
+        ESP_LOGW(TAG, "%s: %s, trying the next device", P.name, last);
+        disconnect();
+        P.found = false;
     }
     /* the state notifications: the CCCD right after the value */
     uint8_t on[2] = {1, 0};
@@ -502,8 +666,8 @@ static const char *pair_run(void)
 
     /* 5. the verdict: a state, or the link going down as it leaves setup mode */
     set_status("waiting", "waiting for %s to join \"%s\"", P.name, CONFIG_DONGLE_SSID);
-    int64_t until = esp_log_timestamp() + PAIR_WAIT_MS;
-    while (!P.cancel && !P.dropped && P.verdict < 0 && (int64_t)esp_log_timestamp() < until) {
+    until = now_ms() + PAIR_WAIT_MS;
+    while (!P.cancel && !P.dropped && P.verdict < 0 && now_ms() < until) {
         op_wait(500);
     }
     P.watching = false;
@@ -599,7 +763,7 @@ const char *pair_start(void)
     P.running = true;
     set_status("starting", "starting Bluetooth");
     /* the stack: mbedTLS RSA and the flow's buffers */
-    if (xTaskCreate(start_task, "pair", 8192, NULL, 3, NULL) != pdPASS) {
+    if (xTaskCreate(start_task, "pair", 12288, NULL, 3, NULL) != pdPASS) {
         P.running = false;
         set_status("failed", "no memory for the pairing task");
         return "no memory";
