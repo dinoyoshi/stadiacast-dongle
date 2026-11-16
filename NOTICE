@@ -1,24 +1,23 @@
-Stadiacast
+Stadiacast dongle firmware
 Copyright (c) 2026 Francisco Jimenez Cabrera and the Stadiacast contributors
 
-Stadiacast is licensed under the MIT License (see LICENSE), with one exception.
+This firmware is a port of Stadiacast (https://github.com/jkfran/stadiacast), the Python
+receiver for the Stadia Controller's Wi-Fi mode, and is licensed under the same MIT License
+(see LICENSE). It was developed in a fork of that repository (dinoyoshi/stadiacast) and moved
+here with its history on 2026-11-16. The protocol work it relies on is Stadiacast's.
 
-Three protobuf schemas under src/stadiacast/schemas/ are reproduced from the Stadia
-Controller firmware (ota.282115), which embeds them as serialized descriptors:
+The firmware encodes and decodes messages whose field numbers come from protobuf schemas that
+Stadiacast reproduces from the Stadia Controller firmware (ota.282115), notably
+webrtc_sdp.proto and input.proto. Those schemas, including the names in them, are Google's
+work. They are not covered by the MIT License and the authors claim no rights in them. They
+are used solely so that an independently created program can interoperate with the
+controller's stock firmware.
 
-    input.descriptor                 and its rendering input.proto
-    webrtc_sdp.descriptor            and its rendering webrtc_sdp.proto
-    yeti_clientanalytics.descriptor  and its rendering yeti_clientanalytics.proto
+firmware/core/opus/libopus is the Xiph.Org Opus codec, a git submodule under its own BSD
+license (see the files in that submodule).
 
-These schemas, including the names in them, are Google's work. They are not covered by
-the MIT License and the Stadiacast authors claim no rights in them. They are included
-solely so that an independently created program can interoperate with the controller's
-stock firmware, and they are used here for that purpose only.
+tests/fake_controller.py is from Stadiacast, with additions for the dongle (the microphone
+echo); it runs against Stadiacast's Python package, installed by pyproject.toml.
 
-Everything else in this repository is the work of the Stadiacast authors and is
-licensed under the MIT License. That includes the four hand-written schemas
-(discovery_api, rpc_message, controller_message, streamer_message), whose field numbers
-and wire types describe the firmware's protocol but whose names and text are ours.
-
-Stadiacast is an independent interoperability project. It is not affiliated with,
-endorsed by or supported by Google. Stadia is a trademark of Google LLC.
+Stadiacast is an independent interoperability project. It is not affiliated with, endorsed by
+or supported by Google. Stadia is a trademark of Google LLC.

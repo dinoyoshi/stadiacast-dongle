@@ -1,6 +1,6 @@
 /*
  * Stadiacast on the ESP32-P4: the servers a Stadia controller in Wi-Fi mode talks to.
- * A port of the Python receiver at the top of this repository (src/stadiacast/).
+ * A port of the Python receiver, https://github.com/jkfran/stadiacast (src/stadiacast/).
  */
 #pragma once
 

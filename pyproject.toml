@@ -1,0 +1,13 @@
+# Only for the firmware's loopback test (firmware/host/run_loopback.sh): tests/fake_controller.py
+# plays a Stadia Controller against the host build of the firmware, using the Stadiacast Python
+# receiver's protocol code. Pinned to an upstream commit so the test doesn't change under us.
+[project]
+name = "stadiacast-dongle-tests"
+version = "0"
+requires-python = ">=3.11"
+dependencies = [
+  "stadiacast @ git+https://github.com/jkfran/stadiacast@3e047553644d7f1d60dc9f6d92b0f70bb6ec8c8c",
+]
+
+[tool.uv]
+package = false

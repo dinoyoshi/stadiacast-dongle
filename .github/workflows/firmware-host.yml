@@ -9,11 +9,15 @@ on:
     paths:
       - firmware/**
       - tests/fake_controller.py
+      - pyproject.toml
+      - uv.lock
       - .github/workflows/firmware-host.yml
   pull_request:
     paths:
       - firmware/**
       - tests/fake_controller.py
+      - pyproject.toml
+      - uv.lock
       - .github/workflows/firmware-host.yml
   workflow_dispatch:
 
@@ -36,7 +40,7 @@ jobs:
         with:
           python-version: "3.13"
           enable-cache: true
-      - run: uv sync --all-extras --locked
+      - run: uv sync --locked
       # mbedTLS 3.6, the line ESP-IDF 5.5 ships (the boards use IDF's copy)
       - name: mbedTLS
         run: |

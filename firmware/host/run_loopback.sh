@@ -3,7 +3,7 @@
 # signalling, DTLS, READY, the game session (input and rumble), headset audio, the microphone
 # echoed back, battery and link stats. Exits non-zero when any of it is missing.
 #   firmware/host/run_loopback.sh [build dir]     (from anywhere; default build-host)
-# Needs the repository's Python environment (uv sync) for tests/fake_controller.py.
+# Needs the Python environment (uv sync, see pyproject.toml) for tests/fake_controller.py.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)

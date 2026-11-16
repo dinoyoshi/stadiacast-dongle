@@ -6,7 +6,7 @@ controller joins a Wi-Fi hotspot run by the board's ESP32-C6, the P4 plays the p
 servers the controller talks to, and the board shows up on the PC, console or phone as a wired
 USB gamepad with rumble and USB headphones. No PC software, no drivers, no cloud.
 
-The Python receiver at the top of this repository stays the reference implementation; the
+The Python receiver, [jkfran/stadiacast](https://github.com/jkfran/stadiacast), stays the reference implementation; the
 protocol work behind both is jkfran's. Where this port stands, what was tested and what is next
 is in [docs/progress.md](docs/progress.md).
 
@@ -63,7 +63,7 @@ table or newer settings (such as TLS buffers in PSRAM); delete it and let `sdkco
 apply.
 
 **Without installing ESP-IDF**, flash the whole-flash image that CI publishes with the web
-console, [stadiacast-dongle-full.bin](https://dinoyoshi.github.io/stadiacast/firmware/stadiacast-dongle-full.bin)
+console, [stadiacast-dongle-full.bin](https://dinoyoshi.github.io/stadiacast-dongle/firmware/stadiacast-dongle-full.bin)
 (or one you made with `idf.py merge-bin`), at offset 0 over the programming port:
 `esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle-full.bin`, or in the browser with
 [ESP Web Tool](https://espressif.github.io/esptool-js/) (address 0x0, Chrome or Edge). After
@@ -106,7 +106,7 @@ That happens once per controller. The dongle can do it itself, through the C6's 
    hotspot's name and password, encrypted for that controller. The card follows each step.
 3. The controller joins the hotspot. In our test it connected by itself about 20 s after
    pairing. If it doesn't (its first start after setup can skip the session, see
-   `docs/protocol.md` section 11), wait a minute, turn it off (hold Stadia 4 s) and wake it.
+   [`docs/protocol.md`](https://github.com/jkfran/stadiacast/blob/3e047553644d7f1d60dc9f6d92b0f70bb6ec8c8c/docs/protocol.md) section 11 in the Python receiver), wait a minute, turn it off (hold Stadia 4 s) and wake it.
    From then on it connects like any other wake.
 
 Or from any PC with Bluetooth, with the Python package's provisioning tool:
@@ -210,7 +210,7 @@ into the computer, open the console in Chrome or Edge (desktop) and press **Conn
 ### Using the console, step by step
 
 1. **Connect.** Plug the dongle's OTG port into the computer and open
-   [dinoyoshi.github.io/stadiacast](https://dinoyoshi.github.io/stadiacast/) in Chrome or Edge.
+   [dinoyoshi.github.io/stadiacast-dongle](https://dinoyoshi.github.io/stadiacast-dongle/) in Chrome or Edge.
    Press **Connect** and pick the dongle's serial port in the browser's list (on Linux, the one
    named after the gamepad, usually `/dev/ttyACM*`). The cards fill in within a second. On Linux
    your user needs to be in the `dialout` group (`uucp` on Arch) first.
@@ -230,7 +230,7 @@ into the computer, open the console in Chrome or Edge (desktop) and press **Conn
 
 ### What the cards show
 
-- Hosted: `https://dinoyoshi.github.io/stadiacast/` (once GitHub Pages is on, see below), or
+- Hosted: `https://dinoyoshi.github.io/stadiacast-dongle/` (once GitHub Pages is on, see below), or
   open `console/index.html` from a checkout. Add `?demo` to look around without a dongle.
 - Live: controller session, its battery and connection quality (below), headphone frames, bitrate, underruns and encode
   time, microphone packets and level, CPU per core, each task's CPU share (paused while the headphones play; Refresh lists them once), free memory, the

@@ -36,7 +36,7 @@ and it never has to be set up again:
   password and the band (2.4 GHz).
 - **macOS:** System Settings → General → Sharing → Internet Sharing, sharing over Wi-Fi.
 - **Linux:** `nmcli dev wifi hotspot ssid stadiacast-dongle password stadiacast` (then stop
-  dnsmasq's DNS on port 53, see the main `docs/setup.md`).
+  dnsmasq's DNS on port 53, see [`docs/setup.md`](https://github.com/jkfran/stadiacast/blob/3e047553644d7f1d60dc9f6d92b0f70bb6ec8c8c/docs/setup.md) in the Python receiver).
 
 ## 3. Run the Python Stadiacast
 
@@ -53,7 +53,7 @@ stadiacast --preset live --dns-upstream 192.168.1.1 --start-game --gamepad ojd  
 ```
 
 The first boot after provisioning never connects. Wait a minute, turn the controller off and
-wake it again (see "What to expect on the first boot" in the main `docs/setup.md`).
+wake it again (see "What to expect on the first boot" in the Python receiver's [`docs/setup.md`](https://github.com/jkfran/stadiacast/blob/3e047553644d7f1d60dc9f6d92b0f70bb6ec8c8c/docs/setup.md)).
 
 ## 4. Check the three things the dongle must do
 

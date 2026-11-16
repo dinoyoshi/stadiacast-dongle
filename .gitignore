@@ -1,0 +1,14 @@
+# (the board project has its own .gitignore in firmware/esp32p4)
+
+# Host build of the core
+build-host/
+
+# Python (the loopback test's fake controller)
+__pycache__/
+*.py[cod]
+.venv/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
