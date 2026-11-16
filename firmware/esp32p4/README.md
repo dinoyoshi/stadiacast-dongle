@@ -233,7 +233,7 @@ into the computer, open the console in Chrome or Edge (desktop) and press **Conn
 - Hosted: `https://dinoyoshi.github.io/stadiacast/` (once GitHub Pages is on, see below), or
   open `console/index.html` from a checkout. Add `?demo` to look around without a dongle.
 - Live: controller session, its battery and connection quality (below), headphone frames, bitrate, underruns and encode
-  time, microphone packets and level, CPU per core, each task's CPU share, free memory, the
+  time, microphone packets and level, CPU per core, each task's CPU share (paused while the headphones play; Refresh lists them once), free memory, the
   controller's input, and the firmware's log.
 - Settings: gamepad mode, headphone gain (-12 to 0 dB before the Opus encoder), Opus complexity,
   Opus complexity while the mic is on, Opus bitrate (32 to 160 kbps), microphone (after a restart), push to talk; restart and reset buttons.
@@ -307,7 +307,8 @@ GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Acti
   (the mic running) the headphones may crackle a little: their stream has 1 to 3 underruns per
   10 s instead of about 0. The encoder drops to complexity 4 while the mic runs (about half
   its CPU time at 8). A later board test showed 3 underruns per 10 s with the mic on or off,
-  from USB packets the board missed; those are now filled in (not yet tested on the board).
+  from USB packets the board missed while the web console listed its tasks; the list now
+  pauses while the headphones play (not yet tested on the board).
   Keep the Opus complexity at 8 or below: 10 stutters.
 - Several controllers are tested on a PC build (two fake controllers) and on the board with one
   real controller; players 2 to 4 with real controllers are untested. Pairing over the board's

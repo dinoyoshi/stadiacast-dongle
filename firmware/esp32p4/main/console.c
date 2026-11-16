@@ -10,13 +10,14 @@
  *                         quality: keepalive round trip, input series lost), headset audio,
  *                         microphone, USB, CPU per core and memory (counters from power-up: the
  *                         page takes the differences)
- *   {"t":"tasks",...}     every 2 s: each task's share of a core since the last one
+ *   {"t":"tasks",...}     each task's share of a core since the last one: every 2 s while the
+ *                         headphones are idle, and on "tasks" (see tasks_snapshot)
  *   {"t":"pad",...}       a controller's input as the host gets it ("p": its player, 0 = player 1),
  *                         at most 20 times a second per player
  *   {"t":"ok"|"err",...}  the answer to a command
  *   anything else         the firmware's log, while "logs on"
  *   {"t":"rumble",...}    the motors' levels (0..65535) and the host's (0..255), when they change
- * From the host, a line each: hello | get | set <key> <value> | defaults | logs on|off | reboot
+ * From the host, a line each: hello | get | tasks | set <key> <value> | defaults | logs on|off | reboot
  *   | rumble <left 0-255> <right 0-255> [ms]  (a test: through the rumble settings, 1 s by
  *   default, 5 s at most; "rumble 0 0" stops it)
  *   | ota [begin <size> <sha256>]  (a firmware update: ota.c, which also sends {"t":"ota",...})
@@ -99,7 +100,10 @@ static struct {
         configRUN_TIME_COUNTER_TYPE run;
     } *prev; /* MAX_TASKS */
     int nprev;
-    int64_t prev_us;
+    int64_t prev_us;       /* the last per-core figures */
+    int64_t tasks_prev_us; /* the last task list */
+    volatile bool tasks_req;
+    int tasks_again; /* stats ticks until a list asked for with "tasks" */
     configRUN_TIME_COUNTER_TYPE idle_prev[2];
     int cpu[2]; /* % busy, -1 unknown */
     int64_t wifi_at;
@@ -315,30 +319,40 @@ static int players_json(char *out, int cap)
     return len;
 }
 
-/* CPU per core from the idle tasks' run time, and each task's share, since the last call. */
-static void cpu_snapshot(bool send_tasks)
+/* CPU per core from the idle tasks' run time since the last call. Cheap: a few reads under the
+ * kernel lock, once a second. */
+static void cpu_cores(void)
+{
+#if CONSOLE_CPU
+    int64_t now = esp_timer_get_time();
+    int64_t wall = now - K.prev_us;
+    bool have_prev = K.prev_us != 0 && wall > 0;
+    for (int c = 0; c < portNUM_PROCESSORS && c < 2; c++) {
+        configRUN_TIME_COUNTER_TYPE run = ulTaskGetIdleRunTimeCounterForCore(c);
+        if (have_prev) {
+            int64_t idle_us = (int64_t)(configRUN_TIME_COUNTER_TYPE)(run - K.idle_prev[c]);
+            int busy = 100 - (int)(idle_us * 100 / wall);
+            K.cpu[c] = busy < 0 ? 0 : busy > 100 ? 100 : busy;
+        }
+        K.idle_prev[c] = run;
+    }
+    K.prev_us = now;
+#endif
+}
+
+/* Each task's share of a core since the last list. uxTaskGetSystemState() holds the kernel's
+ * critical section (interrupts off) while it measures every task's free stack: about 6 ms on
+ * the board, long enough for the USB interrupt to miss ~50 headphone packets (usb_audio.c). So
+ * it runs every 2 s only while the headphones are idle, and once on "tasks" from the host. */
+static void tasks_snapshot(void)
 {
 #if CONSOLE_CPU
     if (!K.tasks) return;
     configRUN_TIME_COUNTER_TYPE total;
     UBaseType_t n = uxTaskGetSystemState(K.tasks, MAX_TASKS, &total);
     int64_t now = esp_timer_get_time();
-    int64_t wall = now - K.prev_us;
-    bool have_prev = K.prev_us != 0 && wall > 0;
-    for (int c = 0; c < portNUM_PROCESSORS && c < 2; c++) {
-        TaskHandle_t idle = xTaskGetIdleTaskHandleForCore(c);
-        for (UBaseType_t i = 0; i < n; i++) {
-            if (K.tasks[i].xHandle != idle) continue;
-            configRUN_TIME_COUNTER_TYPE run = K.tasks[i].ulRunTimeCounter;
-            if (have_prev) {
-                int64_t idle_us = (int64_t)(configRUN_TIME_COUNTER_TYPE)(run - K.idle_prev[c]);
-                int busy = 100 - (int)(idle_us * 100 / wall);
-                K.cpu[c] = busy < 0 ? 0 : busy > 100 ? 100 : busy;
-            }
-            K.idle_prev[c] = run;
-        }
-    }
-    if (send_tasks && have_prev) {
+    int64_t wall = now - K.tasks_prev_us;
+    if (K.tasks_prev_us != 0 && wall > 0) {
         int len = snprintf(K.out, OUT_MAX, "{\"t\":\"tasks\",\"ms\":%d,\"list\":[", (int)(wall / 1000));
         bool first = true;
         for (UBaseType_t i = 0; i < n && len < OUT_MAX - 80; i++) {
@@ -369,7 +383,7 @@ static void cpu_snapshot(bool send_tasks)
         K.prev[K.nprev].run = K.tasks[i].ulRunTimeCounter;
         K.nprev++;
     }
-    K.prev_us = now;
+    K.tasks_prev_us = now;
 #endif
 }
 
@@ -552,6 +566,8 @@ static void handle(char *line)
         send_settings();
         ota_send_status(sendf);
         send_pair(true);
+    } else if (!strcmp(cmd, "tasks")) {
+        K.tasks_req = true; /* the console task lists them with the next stats */
     } else if (!strcmp(cmd, "get")) {
         send_settings();
     } else if (!strcmp(cmd, "set")) {
@@ -616,7 +632,7 @@ static void console_task(void *arg)
         if (usb_console_read_line(line, 50)) handle(line);
         if (!usb_console_active()) {
             next_stats = 0;
-            K.prev_us = 0; /* the next CPU figures start fresh */
+            K.prev_us = K.tasks_prev_us = 0; /* the next CPU figures start fresh */
             if (K.logs) K.logs = false;
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
@@ -628,7 +644,15 @@ static void console_task(void *arg)
         if (now >= next_stats) {
             next_stats = now + 1000000;
             wifi_poll();
-            cpu_snapshot(tick++ % 2 == 1);
+            cpu_cores();
+            usb_pad_audio_stats_t u;
+            usb_pad_audio_stats(&u);
+            /* on "tasks" with nothing to measure from: a start now, the list 2 s later */
+            if (K.tasks_req && !K.tasks_prev_us) K.tasks_again = 2;
+            if ((tick++ % 2 == 1 && !u.playing) || K.tasks_req || (K.tasks_again && !--K.tasks_again)) {
+                K.tasks_req = false;
+                tasks_snapshot();
+            }
             send_stats();
         }
     }
