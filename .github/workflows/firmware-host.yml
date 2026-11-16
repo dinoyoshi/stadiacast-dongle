@@ -1,0 +1,53 @@
+# The firmware's portable core (firmware/core) built for Linux on the POSIX port, then tested:
+# the gamepad modes' reports against their known hashes, and the whole controller session
+# against the Python fake controller (firmware/host/run_loopback.sh).
+name: Firmware core on Linux
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - firmware/**
+      - tests/fake_controller.py
+      - .github/workflows/firmware-host.yml
+  pull_request:
+    paths:
+      - firmware/**
+      - tests/fake_controller.py
+      - .github/workflows/firmware-host.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-host-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive # libopus
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --all-extras --locked
+      # mbedTLS 3.6, the line ESP-IDF 5.5 ships (the boards use IDF's copy)
+      - name: mbedTLS
+        run: |
+          git clone -q --depth 1 -b v3.6.4 https://github.com/Mbed-TLS/mbedtls.git /tmp/mbedtls
+          git -C /tmp/mbedtls submodule update -q --init --depth 1
+      - name: build
+        run: |
+          sudo apt-get install -y -q zlib1g-dev > /dev/null
+          cmake -S firmware/host -B build-host -DMBEDTLS_DIR=/tmp/mbedtls
+          cmake --build build-host -j "$(nproc)"
+      - name: gamepad modes
+        run: build-host/gamepad_test -v
+      - name: loopback against the fake controller
+        run: firmware/host/run_loopback.sh build-host

@@ -50,7 +50,7 @@ You need [ESP-IDF v5.5](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/es
 (the VS Code extension installs it in a few clicks).
 
 ```sh
-git submodule update --init       # once: libopus, in components/opus/libopus
+git submodule update --init       # once: libopus, in firmware/core/opus/libopus
 cd firmware/esp32p4
 idf.py set-target esp32p4
 idf.py build
@@ -293,7 +293,8 @@ at the top of `main/console.c` (and the firmware update's at the top of `main/ot
 
 GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Actions". The
 `Web console and firmware (GitHub Pages)` workflow then builds the firmware and publishes it with
-`console/` on every change under `firmware/esp32p4/` on `main` (pull requests only build it).
+`console/` on every change under `firmware/esp32p4/`, `firmware/core/` or `firmware/platform/` on
+`main` (pull requests only build it).
 
 ## Known limits
 
@@ -316,15 +317,19 @@ GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Acti
 
 ## For developers
 
-How the code is laid out:
+How the code is laid out. The firmware is split so other boards can reuse everything that isn't
+tied to this one ([firmware/README.md](../README.md) has the whole layout):
 
 | path | what |
 |---|---|
-| `main/` | start-up, the hotspot and DNS sink (`hotspot.c`), C6 update, mode switching, status LED |
-| `components/stadia/` | the receiver: HTTPS, GMsg signalling, ICE/DTLS-SRTP, display and game sessions, Opus audio; plain C, also builds for Linux |
-| `components/usb_pad/` | TinyUSB device: XInput, DualShock 4, Switch Pro and HID descriptors and reports, the UAC2 headphones |
-| `components/opus/` | libopus 1.5.2 (git submodule), fixed point |
-| `host_test/` | the Linux build of `components/stadia` for testing against the fake controller |
+| `../core/stadia/` | the receiver: HTTPS, GMsg signalling, ICE/DTLS-SRTP, display and game sessions, Opus audio, microphone; plain C, also builds for Linux |
+| `../core/gamepad/` | the USB gamepad modes: Xbox 360, DualShock 4, Switch Pro and HID descriptors and reports, one `mode_<name>.c` each; plain C |
+| `../core/opus/` | libopus 1.5.2 (git submodule), fixed point |
+| `../platform/port_api/` | `stadia_port.h`: the OS services the core needs (tasks, time, memory, locks, log) |
+| `../platform/port_esp_idf/` | `stadia_port.h` on ESP-IDF, for any ESP32 board |
+| `../host/` | the Linux build of the core, tested against the fake controller (also in CI) |
+| `main/` | this board's start-up, the hotspot and DNS sink (`hotspot.c`), C6 update, mode switching, status LED, console, OTA, pairing |
+| `components/usb_pad/` | this board's USB device (TinyUSB on the P4's DWC2 high-speed port): the gamepads, the UAC2 headset, the console's serial port |
 | `c6_fw/` | where the C6's `network_adapter.bin` goes for an update (not committed) |
 
 ### What the serial log should show
@@ -437,14 +442,24 @@ update leaves it working. The partition table holds a 3 MB app and a 2 MB `c6_fw
 
 ### Testing on a PC
 
-`components/stadia/` is plain C on BSD sockets and mbedTLS, so it also builds for Linux and
-runs against the Python fake controller in `tests/fake_controller.py`:
+The core (`firmware/core/`) is plain C on BSD sockets and mbedTLS, so it also builds for Linux
+(`firmware/host/`) and runs against the Python fake controller in `tests/fake_controller.py`.
+From the repository root:
 
 ```sh
-cmake -S host_test -B build-host -DMBEDTLS_DIR=$IDF_PATH/components/mbedtls/mbedtls
+cmake -S firmware/host -B build-host -DMBEDTLS_DIR=$IDF_PATH/components/mbedtls/mbedtls
 cmake --build build-host
+build-host/gamepad_test                  # the gamepad modes' reports are unchanged
+firmware/host/run_loopback.sh build-host # the whole session against the fake controller
+```
+
+`run_loopback.sh` checks the game session, rumble, headset audio, the microphone and the battery
+reading, and CI runs both on every pull request that touches `firmware/`. To run the pieces by
+hand:
+
+```sh
 STADIA_ALLOW_CLEARCUT=1 build-host/stadia_host 127.0.0.1 8443 40000 &
-uv run tests/fake_controller.py --host 127.0.0.1 --https-port 8443   # from the repository root
+uv run tests/fake_controller.py --host 127.0.0.1 --https-port 8443
 ```
 
 For the game session, start the host build with `STADIA_START_GAME=1` and run the fake

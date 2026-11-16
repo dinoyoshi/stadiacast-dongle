@@ -5,6 +5,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -89,6 +90,11 @@ void port_sleep_ms(int ms)
 void port_random(void *buf, size_t len)
 {
     esp_fill_random(buf, len);
+}
+
+void port_mac(uint8_t mac[6])
+{
+    esp_read_mac(mac, ESP_MAC_BASE);
 }
 
 void port_lock(void)

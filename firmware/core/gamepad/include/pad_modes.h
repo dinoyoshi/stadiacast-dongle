@@ -1,11 +1,11 @@
 /*
- * What each gamepad mode sends and answers, apart from USB itself (usb_pad.c): the HID report
- * descriptors, the input reports, the DualShock 4's feature reports and the Switch Pro
- * Controller's USB protocol.
+ * What each gamepad mode sends and answers, apart from USB itself (the board's USB device code):
+ * the HID report descriptors, the input reports, the DualShock 4's feature reports and the
+ * Switch Pro Controller's USB protocol. Plain C, no board code: one mode_<name>.c per mode.
  */
 #pragma once
 
-#include "usb_pad.h"
+#include "gamepad.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -36,6 +36,20 @@ typedef struct {
     bool rumble; /* large/small are new rumble levels */
     uint8_t large, small;
 } pad_output_t;
+
+/* One mode: its USB identity and its reports. Only report is required. */
+typedef struct {
+    pad_mode_info_t info;
+    size_t (*report)(const usb_pad_state_t *st, uint8_t *out); /* the input report, PAD_REPORT_MAX at most */
+    /* an output report (interrupt OUT or SET_REPORT), data[0] being its report ID; out is zeroed.
+     * NULL: the mode ignores them */
+    void (*output)(const usb_pad_state_t *st, const uint8_t *data, size_t len, pad_output_t *out);
+    size_t (*feature)(uint8_t id, uint8_t *out, size_t cap); /* GET_REPORT of a feature report; NULL: none */
+    bool (*streaming)(void); /* whether input reports go out every interval; NULL: info.stream */
+    void (*reset)(void);     /* the host went away: back to the state at plug-in; NULL: nothing */
+} pad_mode_t;
+
+extern const pad_mode_t pad_mode_xinput, pad_mode_ds4, pad_mode_switch, pad_mode_hid;
 
 /* An output report from the host (interrupt OUT or SET_REPORT), data[0] being its report ID. */
 void pad_output(usb_pad_mode_t mode, const usb_pad_state_t *st, const uint8_t *data, size_t len, pad_output_t *out);
