@@ -1,7 +1,7 @@
 # The dongle's own logic, the same on every board: input mapping, mode combos, rumble, players,
-# status LED patterns, the settings, the console's protocol and firmware updates over it. The
-# board provides dongle_board.h.
-set(DONGLE_SRCS input.c pad_mode.c rumble.c players.c status_led.c console.c ota.c)
+# status LED patterns, the settings, the console's protocol, firmware updates over it and pairing
+# a controller over Bluetooth LE. The board provides dongle_board.h (and dongle_ble_t for pairing).
+set(DONGLE_SRCS input.c pad_mode.c rumble.c players.c status_led.c console.c ota.c pair.c)
 
 if(ESP_PLATFORM)
     idf_component_register(

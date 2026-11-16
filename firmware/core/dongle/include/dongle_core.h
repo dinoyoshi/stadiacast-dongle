@@ -6,6 +6,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "gamepad.h"
@@ -88,8 +89,8 @@ int32_t console_gain_q15(void);
 
 /* ---- the console (console.c): JSON lines over the board's console link ------------------- */
 
-/* Pairing a controller over the board's Bluetooth (on the P4: esp32p4/main/pair.c), which the
- * console starts and polls. A board without it passes none. */
+/* Pairing a controller over the board's Bluetooth (pair.c, on the board's dongle_ble_t), which
+ * the console starts and polls. A board without it passes none. */
 typedef struct {
     const char *state; /* idle, starting, scanning, connecting, reading, sending, waiting, done, failed */
     char msg[160];     /* what is going on, or why it failed, for a person */
@@ -107,6 +108,60 @@ typedef struct {
 } dongle_pair_t;
 /* Before console_start; NULL (the default): no pairing on this board. */
 void console_set_pairing(const dongle_pair_t *pair);
+
+/* ---- pairing (pair.c): the Stadia app's Wi-Fi setup over Bluetooth LE -------------------- */
+
+/* A Bluetooth LE device address: its type (public, random) and 6 bytes, least significant first. */
+typedef struct {
+    uint8_t type;
+    uint8_t val[6];
+} dongle_ble_addr_t;
+
+/* What the board's Bluetooth reports, from its own task (keep it short, never block). */
+typedef struct {
+    /* An advertisement heard while scanning: its first 16-bit service data UUID (0: none) and
+     * its name (not NUL-terminated, len 0: none). */
+    void (*adv)(const dongle_ble_addr_t *addr, int rssi, uint16_t svc_data_uuid16, const char *name,
+                size_t name_len);
+    void (*scan_done)(void); /* the scan ended by itself */
+    void (*disconnected)(int reason);
+    void (*notify)(uint16_t handle, const uint8_t *data, size_t len);
+} dongle_ble_events_t;
+
+/* A board's Bluetooth LE central, one link at a time. Every call but cancel comes from the
+ * pairing task; the blocking ones return 0 when done, else an error (the board's own codes). */
+typedef struct {
+    /* Bring Bluetooth up, the first time (it then stays up); NULL when up, else why not. */
+    const char *(*start)(const dongle_ble_events_t *events);
+    int (*scan_start)(int ms); /* active scan, every advertisement reported */
+    void (*scan_stop)(void);
+    /* Connect: 0 connected, DONGLE_BLE_CONNECT_FAILED when it could not even start */
+    int (*connect)(const dongle_ble_addr_t *addr, int timeout_ms);
+    /* Exchange the MTU (the result is ignored), and the MTU now in use (23 by default). */
+    void (*exchange_mtu)(int timeout_ms);
+    unsigned (*mtu)(void);
+    /* Find the characteristics with these 128-bit UUIDs (little endian, as on the air): each
+     * one's value handle, 0 when the device has none. */
+    int (*find_chrs)(const uint8_t (*uuids)[16], int n, uint16_t *handles, int timeout_ms);
+    /* Write (a long write when it does not fit the MTU) and wait for the answer. */
+    int (*write)(uint16_t handle, const void *data, size_t len, int timeout_ms);
+    /* A long read, appended to buf at *len (what does not fit is dropped). */
+    int (*read_long)(uint16_t handle, uint8_t *buf, size_t cap, size_t *len, int timeout_ms);
+    /* End the link, and return once it is down (or after about a second). */
+    void (*disconnect)(void);
+    /* From any task (pair_stop): stop a scan, drop the link, end the call that waits. */
+    void (*cancel)(void);
+} dongle_ble_t;
+#define DONGLE_BLE_CONNECT_FAILED (-1)
+
+/* The board's Bluetooth and the hotspot pairing gives the controller: before pair_init. Without
+ * it pair_init fails (the console then says the board has no pairing). */
+void pair_setup(const dongle_ble_t *ble, const char *ssid, const char *password);
+/* The dongle_pair_t a board passes to console_set_pairing. */
+bool pair_init(void);
+const char *pair_start(void); /* NULL when started, else why not */
+void pair_stop(void);
+void pair_get_status(pair_status_t *out);
 
 /* The console task, after stadia_start. */
 void console_start(bool mic_running, int players);

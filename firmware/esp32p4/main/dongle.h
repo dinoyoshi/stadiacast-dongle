@@ -12,10 +12,5 @@ esp_netif_t *hotspot_start(void);
  * there and the C6 runs another. Restarts the board after an update. */
 void c6_update_if_needed(void);
 
-/* Pairing (pair.c): give a controller in Bluetooth setup mode the hotspot's name and password
- * through the C6's Bluetooth, as the Stadia app did. Runs in its own task; the console starts it
- * and polls the status (console_set_pairing). */
-bool pair_init(void);
-const char *pair_start(void); /* NULL when started, else why not */
-void pair_stop(void);
-void pair_get_status(pair_status_t *out);
+/* Bluetooth LE for pairing (ble_central.c): the C6's radio and NimBLE, for core/dongle/pair.c. */
+extern const dongle_ble_t esp32p4_ble;

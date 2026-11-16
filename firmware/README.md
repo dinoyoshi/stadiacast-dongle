@@ -16,9 +16,10 @@ firmware/
                        USB protocols), one mode_<name>.c each
     dongle/            the dongle's own logic: input mapping, the mode combos and the board's
                        button, rumble settings and test, players, status LED patterns, the
-                       web console's protocol and firmware updates over it; the board
-                       provides dongle_board.h (key/value store, LED, button, USB, the
-                       console link, stats, firmware slots)
+                       web console's protocol, firmware updates over it, and pairing a
+                       controller over Bluetooth LE; the board provides dongle_board.h
+                       (key/value store, LED, button, USB, the console link, stats,
+                       firmware slots) and, for pairing, a dongle_ble_t
     opus/              libopus 1.5.2 (git submodule), fixed point
   platform/
     port_api/          stadia_port.h: the OS services the core needs
@@ -27,8 +28,8 @@ firmware/
   host/                the core built for Linux and tested against tests/fake_controller.py
   esp32p4/             the FireBeetle 2 ESP32-P4: an ESP-IDF project with the board's own
                        code (C6 hotspot, TinyUSB on the P4's high-speed port, dongle_board.h
-                       on NVS, its GPIOs, USB serial and esp_ota, NimBLE pairing) and the web
-                       console page (console/)
+                       on NVS, its GPIOs, USB serial and esp_ota, Bluetooth LE on NimBLE)
+                       and the web console page (console/)
 ```
 
 The core's sources build unchanged for every target: as ESP-IDF components on an ESP32 board
@@ -65,21 +66,42 @@ The `Firmware core on Linux` workflow runs all three on every pull request that 
 
 ## Adding a board
 
-Still in progress: the pairing protocol still lives in `esp32p4/main/pair.c` and moves into
-`core/` next (a board without Bluetooth passes no pairing ops; the console then answers "this
-board has no pairing"). For now a new board needs:
+Everything the controller and the PC see is in `core/`; a board supplies the OS layer, a few
+board services, and its own radio and USB. The ESP32-P4 project (`esp32p4/`) is the worked
+example for each piece. A new board needs:
 
-- an implementation of `platform/port_api/include/stadia_port.h` (or `port_esp_idf` on any
-  ESP32, `port_posix` on Linux),
-- an implementation of `core/dongle/include/dongle_board.h`: a key/value store, the LED and
-  button (or none), its USB device's mode and reports, a byte link for the web console (a USB
-  serial port, or none), board info and stats, and two firmware slots for updates (or
-  `board_fw_begin()` returning an error). On ESP-IDF it is a component named
-  `dongle_board` (the ESP32-P4's is `esp32p4/components/dongle_board`),
-- a Wi-Fi access point the controller joins, with the board at a fixed address,
-- a USB device stack that sends the reports `core/gamepad` builds (on TinyUSB, the ESP32-P4's
-  `esp32p4/components/usb_pad` is the model),
-- a start-up that calls `stadia_start()` and passes input (`dongle_pad_state()`,
-  `pad_mode_filter()`), rumble (`rumble_host()`) and audio between the core and the USB side,
-  as `esp32p4/main/main.c` does, plus `settings_load()` and `console_start()` for the web
-  console.
+1. **The OS layer**: `platform/port_api/include/stadia_port.h` (tasks, time, memory, locks,
+   events, timers, byte streams, inflate/gunzip, log). Any ESP32 takes `platform/port_esp_idf`
+   as it is; Linux takes `platform/port_posix`; another OS implements the header.
+2. **Board services**: `core/dongle/include/dongle_board.h`:
+   - a key/value store (settings, players, the USB mode),
+   - the LED and the button, or none,
+   - the USB device's mode and reports,
+   - a byte link for the web console (a USB serial port), or none,
+   - board info and stats (chip, CPU, heap, the task list JSON), and restart,
+   - two firmware slots for updates, or `board_fw_begin()` returning an error.
+
+   On ESP-IDF it is a component named `dongle_board` (the ESP32-P4's is
+   `esp32p4/components/dongle_board`), because the core's components link against that name.
+3. **A Wi-Fi access point** the controller joins, with the board at a fixed address
+   (`esp32p4/main/hotspot.c`: the C6 over ESP-Hosted).
+4. **A USB device stack** that sends the reports `core/gamepad` builds and, for headset audio,
+   a UAC2 function (on TinyUSB, `esp32p4/components/usb_pad` is the model).
+5. **Bluetooth LE, for pairing (optional)**: a `dongle_ble_t` from `core/dongle/include/
+   dongle_core.h`, a central with one link: scan with every advertisement reported, connect,
+   find characteristics by 128-bit UUID, write (long when needed), long read, notifications
+   and the link going down reported back. `esp32p4/main/ble_central.c` does it with NimBLE.
+   The protocol itself (choosing the device, the crypto window, the RSA password, the
+   verdict) is `core/dongle/pair.c`. A board without Bluetooth leaves this out and the
+   console answers "this board has no pairing"; `stadiacast-provision` on a PC still works.
+6. **A start-up** like `esp32p4/main/main.c`:
+   - `settings_load()`, then `stadia_start()` with the hotspot's settings,
+   - input (`dongle_pad_state()`, `pad_mode_filter()`), rumble (`rumble_host()`) and audio
+     between the core and the USB side,
+   - `pair_setup()` and `console_set_pairing()` when it has Bluetooth, then `console_start()`,
+   - `ota_confirm_when_up()` if it has firmware slots.
+
+`host/dongle_test.c` is a fake board with every one of these (store, LED, button, console
+link, slots, Bluetooth with a fake controller in setup mode): a quick way to see what each call
+is expected to do. Run it, `gamepad_test` and `run_loopback.sh` after any change to the core.
+

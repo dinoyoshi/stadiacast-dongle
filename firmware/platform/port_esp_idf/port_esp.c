@@ -234,3 +234,25 @@ size_t port_inflate(const uint8_t *src, size_t n, uint8_t *dst, size_t cap)
     if (r == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED) r = tinfl_decompress_mem_to_mem(dst, cap, src, n, 0);
     return r == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED ? 0 : r;
 }
+
+size_t port_gunzip(const uint8_t *d, size_t n, uint8_t *dst, size_t cap)
+{
+    if (n < 18 || d[0] != 0x1F || d[1] != 0x8B || d[2] != 8) return 0;
+    uint8_t flg = d[3];
+    size_t p = 10;
+    if (flg & 4) p += 2 + (size_t)(d[p] | d[p + 1] << 8); /* FEXTRA */
+    if (flg & 8) while (p < n && d[p++]) {}           /* FNAME */
+    if (flg & 16) while (p < n && d[p++]) {}          /* FCOMMENT */
+    if (flg & 2) p += 2;                              /* FHCRC */
+    if (p >= n) return 0;
+    /* The decompressor is about 10.5 KB: on the heap, never the caller's stack
+     * (tinfl_decompress_mem_to_mem keeps it on the stack, which overflowed the pairing task). */
+    tinfl_decompressor *dec = heap_caps_malloc(sizeof(*dec), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!dec) dec = malloc(sizeof(*dec));
+    if (!dec) return 0;
+    tinfl_init(dec);
+    size_t in_len = n - p, out_len = cap;
+    tinfl_status st = tinfl_decompress(dec, d + p, &in_len, dst, dst, &out_len, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    free(dec);
+    return st == TINFL_STATUS_DONE ? out_len : 0;
+}
