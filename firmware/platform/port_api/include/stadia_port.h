@@ -1,7 +1,8 @@
 /*
- * The few OS services the Stadiacast core needs, so the same sources build for the ESP32-P4
- * (FreeRTOS + lwIP, port_esp.c) and for a Linux host test against the Python fake controller
- * (pthreads + BSD sockets, port_posix.c). Sockets are plain BSD calls on both.
+ * The few OS services the portable core (firmware/core) needs, so the same sources build for
+ * any ESP32 (FreeRTOS + lwIP, platform/port_esp_idf) and for a Linux host test against the
+ * Python fake controller (pthreads + BSD sockets, platform/port_posix). Sockets are plain BSD
+ * calls on both. A new board on another OS implements this header and nothing else for the core.
  */
 #pragma once
 
@@ -35,6 +36,9 @@ void *port_alloc_bulk(size_t n);
 void port_random(void *buf, size_t len);
 /* Inflate a zlib (or else raw deflate) stream into dst. Returns the size, 0 on failure. */
 size_t port_inflate(const uint8_t *src, size_t n, uint8_t *dst, size_t cap);
+
+/* The board's own MAC address (the USB gamepad modes that report one use it). */
+void port_mac(uint8_t mac[6]);
 
 /* One global lock for the controller session. */
 void port_lock(void);

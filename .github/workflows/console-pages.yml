@@ -11,10 +11,14 @@ on:
     branches: [main]
     paths:
       - firmware/esp32p4/**
+      - firmware/core/**
+      - firmware/platform/**
       - .github/workflows/console-pages.yml
   pull_request:
     paths:
       - firmware/esp32p4/**
+      - firmware/core/**
+      - firmware/platform/**
       - .github/workflows/console-pages.yml
   workflow_dispatch:
 

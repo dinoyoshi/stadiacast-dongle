@@ -97,6 +97,13 @@ void port_random(void *buf, size_t len)
     }
 }
 
+/* A fixed, locally administered address: the host has no board MAC of its own to give. */
+void port_mac(uint8_t mac[6])
+{
+    static const uint8_t m[6] = {0x02, 0x53, 0x54, 0x44, 0x41, 0x01};
+    for (int i = 0; i < 6; i++) mac[i] = m[i];
+}
+
 void port_lock(void)
 {
     pthread_once(&s_once, init_lock);
