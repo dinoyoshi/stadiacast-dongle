@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stadiacast Dongle Console</title>
+<meta name="description" content="Live stats and settings for the Stadiacast ESP32-P4 dongle, over USB (Web Serial).">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='9' width='28' height='15' rx='7' fill='%23ff4c1d'/%3E%3Ccircle cx='10' cy='16.5' r='3' fill='white'/%3E%3Ccircle cx='22' cy='16.5' r='3' fill='white'/%3E%3C/svg%3E">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f4f2;
+  --surface: #fcfcfb;
+  --surface-2: #efefec;
+  --border: #dedcd6;
+  --text: #0b0b0b;
+  --text-2: #52514e;
+  --text-3: #77766f;
+  --accent: #ff4c1d;
+  --accent-ink: #ffffff;
+  --series-1: #2a78d6;
+  --good: #0a7d32;
+  --warn: #a35f00;
+  --bad: #c62828;
+  --good-bg: #e3f3e8;
+  --warn-bg: #fbefd9;
+  --bad-bg: #fbe5e5;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121211;
+    --surface: #1a1a19;
+    --surface-2: #242422;
+    --border: #34332f;
+    --text: #f0efec;
+    --text-2: #c3c2b7;
+    --text-3: #93928a;
+    --series-1: #3987e5;
+    --good: #4cc274;
+    --warn: #e7a43a;
+    --bad: #ef6b6b;
+    --good-bg: #17301f;
+    --warn-bg: #352812;
+    --bad-bg: #3a1a1a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121211;
+  --surface: #1a1a19;
+  --surface-2: #242422;
+  --border: #34332f;
+  --text: #f0efec;
+  --text-2: #c3c2b7;
+  --text-3: #93928a;
+  --series-1: #3987e5;
+  --good: #4cc274;
+  --warn: #e7a43a;
+  --bad: #ef6b6b;
+  --good-bg: #17301f;
+  --warn-bg: #352812;
+  --bad-bg: #3a1a1a;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+header {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--surface);
+  position: sticky; top: 0; z-index: 5;
+}
+header h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+header .spacer { flex: 1; }
+button, select {
+  font: inherit; color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--text-3); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 600; background: var(--surface-2); color: var(--text-2);
+}
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.good { background: var(--good-bg); color: var(--good); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.bad { background: var(--bad-bg); color: var(--bad); }
+main { max-width: 1180px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+.notice {
+  border: 1px solid var(--border); background: var(--surface); border-radius: 12px; padding: 14px 16px;
+}
+.notice.warn { border-color: var(--warn); }
+.notice h2 { margin: 0 0 4px; font-size: 15px; }
+.notice p { margin: 4px 0; color: var(--text-2); }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+.card h2 {
+  font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3);
+  margin: 0 0 10px; display: flex; align-items: center; gap: 8px;
+}
+.card h2 .pill { text-transform: none; letter-spacing: 0; }
+dl.kv { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; margin: 0; }
+dl.kv dt { color: var(--text-2); }
+dl.kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weight: 550; min-width: 0; overflow-wrap: anywhere; }
+dl.kv dd .sub { color: var(--text-3); font-weight: 400; }
+.good-t { color: var(--good); } .warn-t { color: var(--warn); } .bad-t { color: var(--bad); }
+.spark { margin-top: 12px; }
+.spark .lbl { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); }
+.spark .lbl b { color: var(--text); font-variant-numeric: tabular-nums; }
+.spark svg { display: block; width: 100%; height: 44px; overflow: visible; }
+.spark .line { fill: none; stroke: var(--series-1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.spark .area { fill: var(--series-1); opacity: .12; }
+.spark .base { stroke: var(--border); stroke-width: 1; }
+.spark .dot { fill: var(--series-1); stroke: var(--surface); stroke-width: 2; }
+.spark .hover { stroke: var(--text-3); stroke-width: 1; }
+.tip {
+  position: fixed; pointer-events: none; background: var(--text); color: var(--bg);
+  font-size: 12px; padding: 4px 8px; border-radius: 6px; z-index: 20; display: none; white-space: nowrap;
+}
+.settings { display: grid; gap: 14px; }
+.setting { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; }
+.setting label { font-weight: 600; }
+.setting.stack { grid-template-columns: 1fr; gap: 6px; }
+.setting .help { grid-column: 1 / -1; color: var(--text-3); font-size: 12.5px; }
+.setting input[type=range] { width: 160px; accent-color: var(--accent); }
+.setting output { font-variant-numeric: tabular-nums; min-width: 52px; display: inline-block; text-align: right; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex-wrap: wrap; }
+.seg button { border: 0; border-radius: 0; padding: 6px 10px; background: transparent; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button[aria-pressed=true] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.switch { position: relative; width: 42px; height: 24px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.switch span { position: absolute; inset: 0; border-radius: 12px; background: var(--border); transition: .15s; cursor: pointer; }
+.switch span::after { content: ""; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--surface); transition: .15s; }
+.switch input:checked + span { background: var(--accent); }
+.switch input:checked + span::after { transform: translateX(18px); }
+.switch input:focus-visible + span { outline: 2px solid var(--series-1); outline-offset: 2px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.pad { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: center; }
+.stick { width: 100%; max-width: 120px; aspect-ratio: 1; border-radius: 50%; border: 2px solid var(--border); position: relative; margin: 0 auto; background: var(--surface-2); }
+.stick i { position: absolute; width: 18px; height: 18px; border-radius: 50%; background: var(--series-1); left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.stick.pressed { border-color: var(--series-1); }
+.trig { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.trig i { display: block; height: 100%; width: 0; background: var(--series-1); border-radius: 4px; }
+.btns { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+.btns span { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border); }
+.btns span.on { background: var(--series-1); color: #fff; border-color: var(--series-1); }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+th { color: var(--text-3); font-weight: 600; font-size: 12px; }
+td.n, th.n { text-align: right; }
+.bar { display: inline-block; height: 6px; border-radius: 3px; background: var(--series-1); vertical-align: middle; margin-right: 6px; }
+.wide { grid-column: 1 / -1; }
+pre.log {
+  font: 12px/1.45 var(--mono); background: var(--surface-2); border-radius: 8px; padding: 10px;
+  height: 280px; overflow: auto; margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.log .E { color: var(--bad); } .log .W { color: var(--warn); }
+.muted { color: var(--text-3); }
+.toast {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
+  padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 30; opacity: 0; transition: opacity .2s; pointer-events: none;
+  max-width: calc(100% - 32px);
+}
+.toast.show { opacity: 1; }
+details summary { cursor: pointer; color: var(--text-2); }
+code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+@media (max-width: 520px) {
+  .grid { grid-template-columns: 1fr; }
+  .setting { grid-template-columns: 1fr; }
+  .setting input[type=range] { width: 100%; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Stadiacast Dongle</h1>
+  <span id="conn" class="pill">Not connected</span>
+  <span class="spacer"></span>
+  <button id="btnConnect" class="primary">Connect</button>
+  <button id="btnDisconnect" hidden>Disconnect</button>
+</header>
+
+<main>
+  <div id="noSerial" class="notice warn" hidden>
+    <h2>This browser can't talk to the dongle</h2>
+    <p>The console uses Web Serial, which Chrome, Edge and other Chromium browsers have on desktop (Linux, Windows, macOS). Firefox and Safari don't. <a href="?demo">Open the demo</a> to look around anyway.</p>
+  </div>
+
+  <div id="intro" class="notice">
+    <h2>Plug the dongle into this computer and press Connect</h2>
+    <p>Pick <b>Stadiacast Dongle</b> (or the name of its current mode: Xbox, PS4, Pro Controller) from the list. The browser remembers it, and reconnects by itself after a mode change or a restart once each mode has been picked once.</p>
+    <details>
+      <summary>It isn't in the list?</summary>
+      <p><b>Linux:</b> your user needs access to <code>/dev/ttyACM*</code>, usually the <code>dialout</code> group (<code>uucp</code> on Arch): <code>sudo usermod -aG dialout $USER</code>, then log in again. ModemManager may hold the port for a few seconds after plugging in.</p>
+      <p><b>Windows:</b> the port shows up as a "USB Serial Device (COMx)" in Device Manager; no driver is needed on Windows 10 or 11.</p>
+      <p><b>Firmware:</b> the console needs a build with <code>CONFIG_DONGLE_CONSOLE</code> (on by default since the web console was added).</p>
+    </details>
+  </div>
+
+  <div id="dash" hidden>
+    <div class="grid">
+      <section class="card">
+        <h2>Controller <span id="ctlPill" class="pill">–</span></h2>
+        <dl class="kv">
+          <dt>Session</dt><dd id="ctlState">–</dd>
+          <dt>Game link</dt><dd id="ctlGame">–</dd>
+          <dt>Wi-Fi signal</dt><dd id="ctlRssi">–</dd>
+          <dt>Hotspot</dt><dd id="ctlSsid">–</dd>
+        </dl>
+        <div class="spark" id="spRssi"></div>
+      </section>
+
+      <section class="card">
+        <h2>Headphones <span id="audPill" class="pill">–</span></h2>
+        <dl class="kv">
+          <dt>Host playing</dt><dd id="audPlay">–</dd>
+          <dt>Frames to controller</dt><dd id="audRate">–</dd>
+          <dt>Bitrate</dt><dd id="audKbps">–</dd>
+          <dt>Underruns</dt><dd id="audUnder">–</dd>
+          <dt>Trimmed / not sent</dt><dd id="audTrim">–</dd>
+          <dt>Encode time</dt><dd id="audEnc">–</dd>
+          <dt>Host volume</dt><dd id="audVol">–</dd>
+        </dl>
+        <div class="spark" id="spUnder"></div>
+      </section>
+
+      <section class="card">
+        <h2>Microphone <span id="micPill" class="pill">–</span></h2>
+        <dl class="kv">
+          <dt>From controller</dt><dd id="micRate">–</dd>
+          <dt>Push to talk</dt><dd id="micTalk">–</dd>
+          <dt>Lost / errors</dt><dd id="micLost">–</dd>
+          <dt>Peak level</dt><dd id="micPeak">–</dd>
+          <dt>Host recording</dt><dd id="micRec">–</dd>
+          <dt>USB underruns / skips</dt><dd id="micUnder">–</dd>
+        </dl>
+        <div class="spark" id="spPeak"></div>
+      </section>
+
+      <section class="card">
+        <h2>Board</h2>
+        <dl class="kv">
+          <dt>Mode</dt><dd id="sysMode">–</dd>
+          <dt>Uptime</dt><dd id="sysUp">–</dd>
+          <dt>Internal RAM free</dt><dd id="sysHeap">–</dd>
+          <dt>PSRAM free</dt><dd id="sysPsram">–</dd>
+          <dt>Firmware</dt><dd id="sysFw">–</dd>
+          <dt>Chip</dt><dd id="sysChip">–</dd>
+        </dl>
+        <div class="spark" id="spCpu0"></div>
+        <div class="spark" id="spCpu1"></div>
+      </section>
+
+      <section class="card">
+        <h2>Settings</h2>
+        <div class="settings">
+          <div class="setting stack">
+            <label>Gamepad mode</label>
+            <div class="seg" id="setMode" role="group" aria-label="Gamepad mode"></div>
+            <div class="help">The dongle leaves USB and comes back as the new controller. Saved.</div>
+          </div>
+          <div class="setting">
+            <label for="setGain">Headphone gain</label>
+            <span><input type="range" id="setGain" min="-12" max="0" step="1"> <output id="outGain"></output></span>
+            <div class="help">Headroom before the Opus encoder. Try −3 dB if loud songs clip.</div>
+          </div>
+          <div class="setting">
+            <label for="setCplx">Opus complexity</label>
+            <span><input type="range" id="setCplx" min="1" max="10" step="1"> <output id="outCplx"></output></span>
+            <div class="help">Lower costs less CPU per frame. Try 5 if the headphones crackle while the mic is on.</div>
+          </div>
+          <div class="setting">
+            <label for="setPtt">Push to talk</label>
+            <label class="switch"><input type="checkbox" id="setPtt"><span></span></label>
+            <div class="help">The mic only works while the Assistant button is held.</div>
+          </div>
+          <div class="setting">
+            <label for="setMic">Microphone</label>
+            <label class="switch"><input type="checkbox" id="setMic"><span></span></label>
+            <div class="help" id="micHelp">Ask the controller for its headset mic. Applies after a restart.</div>
+          </div>
+          <div class="row">
+            <button id="btnReboot">Restart dongle</button>
+            <button id="btnDefaults">Reset settings</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Live input</h2>
+        <div class="pad">
+          <div><div class="stick" id="stL"><i></i></div></div>
+          <div><div class="stick" id="stR"><i></i></div></div>
+          <div><div class="trig"><i id="trL"></i></div></div>
+          <div><div class="trig"><i id="trR"></i></div></div>
+        </div>
+        <div class="btns" id="btns"></div>
+      </section>
+
+      <section class="card wide">
+        <h2>Tasks <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">share of one core over the last 2 s</span></h2>
+        <div style="overflow-x:auto"><table id="tasks"><thead><tr><th>Task</th><th class="n">CPU</th><th class="n">Priority</th><th class="n">Stack free</th></tr></thead><tbody></tbody></table></div>
+      </section>
+
+      <section class="card wide">
+        <h2>Log</h2>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="logOn"><span></span></label> <span>Show the firmware's log</span>
+          <span class="spacer" style="flex:1"></span>
+          <button id="logClear">Clear</button>
+          <button id="logSave">Save</button>
+        </div>
+        <pre class="log" id="log"></pre>
+      </section>
+    </div>
+  </div>
+</main>
+<div class="tip" id="tip"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+/* ---- the USB IDs of each mode (the browser's port picker filters on them) ---- */
+const FILTERS = [
+  { usbVendorId: 0x045e, usbProductId: 0x028e }, // Xbox 360 (no headset)
+  { usbVendorId: 0x1209, usbProductId: 0x0001 }, // Xbox 360 with the headset
+  { usbVendorId: 0x054c, usbProductId: 0x09cc }, // DualShock 4
+  { usbVendorId: 0x057e, usbProductId: 0x2009 }, // Switch Pro
+  { usbVendorId: 0x303a, usbProductId: 0x4047 }, // HID gamepad
+];
+const MODES = ["Xbox 360", "DualShock 4", "Switch Pro", "HID gamepad"];
+const ours = (p) => {
+  const i = p.getInfo ? p.getInfo() : {};
+  return FILTERS.some((f) => f.usbVendorId === i.usbVendorId && f.usbProductId === i.usbProductId);
+};
+
+/* ---- state ---- */
+let link = null;          // {send(line), close()}
+let wantConnected = false;
+let info = null, settings = null, prev = null, prevAt = 0;
+const HIST = 60;
+const hist = { rssi: [], under: [], peak: [], cpu0: [], cpu1: [] };
+
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast.h);
+  toast.h = setTimeout(() => t.classList.remove("show"), 3200);
+}
+function setConn(text, cls) {
+  const c = $("conn");
+  c.textContent = text;
+  c.className = "pill " + (cls || "");
+}
+function pill(el, text, cls) { el.textContent = text; el.className = "pill " + (cls || ""); }
+const fmtBytes = (b) => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : (b / 1024).toFixed(0) + " KB";
+function fmtUp(ms) {
+  let s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600); s -= h * 3600;
+  const m = Math.floor(s / 60); s -= m * 60;
+  return (h ? h + " h " : "") + (h || m ? m + " min " : "") + s + " s";
+}
+const yesno = (v, on = "Yes", off = "No") => v ? on : off;
+
+/* ---- Web Serial ---- */
+async function openPort(port) {
+  await port.open({ baudRate: 115200 });
+  try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch (e) {}
+  const enc = new TextEncoder();
+  const writer = port.writable.getWriter();
+  let reader = null, closed = false;
+  const l = {
+    port,
+    send: (line) => writer.write(enc.encode(line + "\n")).catch(() => {}),
+    close: async () => {
+      closed = true;
+      try { await reader?.cancel(); } catch (e) {}
+      try { writer.releaseLock(); } catch (e) {}
+      try { await port.close(); } catch (e) {}
+    },
+  };
+  (async () => {
+    const dec = new TextDecoder();
+    let buf = "";
+    try {
+      while (port.readable && !closed) {
+        reader = port.readable.getReader();
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            let i;
+            while ((i = buf.indexOf("\n")) >= 0) {
+              onLine(buf.slice(0, i).replace(/\r$/, ""));
+              buf = buf.slice(i + 1);
+            }
+            if (buf.length > 65536) buf = "";
+          }
+        } catch (e) {
+          break; // the device went away
+        } finally {
+          try { reader.releaseLock(); } catch (e) {}
+        }
+      }
+    } finally {
+      if (!closed) onLost(l);
+    }
+  })();
+  return l;
+}
+
+async function connectTo(port) {
+  try {
+    link = await openPort(port);
+  } catch (e) {
+    setConn("Can't open the port", "bad");
+    toast(String(e.message || e));
+    return false;
+  }
+  wantConnected = true;
+  onOpened();
+  return true;
+}
+
+async function connectClick() {
+  if (DEMO) { link = demoLink(); wantConnected = true; onOpened(); return; }
+  try {
+    const port = await navigator.serial.requestPort({ filters: FILTERS });
+    await connectTo(port);
+  } catch (e) {
+    if (e.name !== "NotFoundError") toast(String(e.message || e));
+  }
+}
+
+async function disconnectClick() {
+  wantConnected = false;
+  const l = link; link = null;
+  if (l) await l.close();
+  onClosed("Not connected", "");
+}
+
+function onLost(l) {
+  if (link !== l) return;
+  link = null;
+  onClosed("Reconnecting…", "warn");
+}
+
+async function tryReconnect() {
+  if (link || !wantConnected || !("serial" in navigator)) return;
+  const ports = (await navigator.serial.getPorts()).filter(ours);
+  for (const p of ports) {
+    if (p.connected === false) continue;
+    if (await connectTo(p)) return;
+  }
+}
+
+function onOpened() {
+  setConn("Connected", "good");
+  $("btnConnect").hidden = true;
+  $("btnDisconnect").hidden = false;
+  $("intro").hidden = true;
+  $("dash").hidden = false;
+  prev = null;
+  link.send("hello");
+  if ($("logOn").checked) link.send("logs on");
+}
+
+function onClosed(text, cls) {
+  setConn(text, cls);
+  $("btnConnect").hidden = !!(wantConnected && cls === "warn");
+  $("btnDisconnect").hidden = !wantConnected;
+  clearTimeout(onClosed.h);
+  if (wantConnected) {
+    // a mode change or restart: the dongle is back in a few seconds; a mode never picked before
+    // needs the user's pick
+    onClosed.h = setTimeout(() => {
+      if (!link) {
+        setConn("Pick the dongle again", "warn");
+        $("btnConnect").hidden = false;
+      }
+    }, 8000);
+  }
+}
+
+if ("serial" in navigator) {
+  navigator.serial.addEventListener("connect", () => setTimeout(tryReconnect, 400));
+}
+
+/* ---- messages from the dongle ---- */
+function onLine(line) {
+  if (line.startsWith('{"t":')) {
+    let m;
+    try { m = JSON.parse(line); } catch (e) { return; }
+    switch (m.t) {
+      case "info": info = m; renderInfo(); break;
+      case "settings": settings = m; renderSettings(); break;
+      case "stats": renderStats(m); break;
+      case "tasks": renderTasks(m); break;
+      case "pad": renderPad(m); break;
+      case "ok": if (m.reconnect) { toast(m.key === "reboot" ? "Restarting…" : "Changing mode…"); } break;
+      case "err": toast("Dongle: " + m.msg); break;
+    }
+    return;
+  }
+  logLine(line);
+}
+
+function renderInfo() {
+  $("sysFw").innerHTML = `${esc(info.fw)} <span class="sub">${esc(info.built)}</span>`;
+  $("sysChip").textContent = info.chip;
+  $("ctlSsid").textContent = `${info.ssid} · ch ${info.channel}`;
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+/* settings controls */
+const modeSeg = $("setMode");
+MODES.forEach((name, i) => {
+  const b = document.createElement("button");
+  b.textContent = name;
+  b.setAttribute("aria-pressed", "false");
+  b.onclick = () => {
+    if (!link || settings?.mode === i) return;
+    link.send(`set mode ${i}`);
+  };
+  modeSeg.appendChild(b);
+});
+let dragging = null;
+for (const [id, key, out, fmt] of [["setGain", "gain", "outGain", (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v) + " dB"], ["setCplx", "complexity", "outCplx", (v) => v]]) {
+  const el = $(id);
+  el.addEventListener("input", () => { dragging = id; $(out).textContent = fmt(+el.value); });
+  el.addEventListener("change", () => { dragging = null; link?.send(`set ${key} ${el.value}`); });
+  el._fmt = fmt; el._out = out;
+}
+$("setPtt").addEventListener("change", (e) => link?.send(`set ptt ${e.target.checked ? 1 : 0}`));
+$("setMic").addEventListener("change", (e) => link?.send(`set mic ${e.target.checked ? 1 : 0}`));
+$("btnReboot").onclick = () => link?.send("reboot");
+$("btnDefaults").onclick = () => { if (confirm("Reset the gain, Opus complexity, microphone and push to talk to their defaults?")) link?.send("defaults"); };
+
+function renderSettings() {
+  [...modeSeg.children].forEach((b, i) => b.setAttribute("aria-pressed", String(settings.mode === i)));
+  for (const [id, v] of [["setGain", settings.gain], ["setCplx", settings.complexity]]) {
+    const el = $(id);
+    if (dragging !== id) { el.value = v; $(el._out).textContent = el._fmt(v); }
+  }
+  $("setPtt").checked = settings.ptt;
+  $("setMic").checked = settings.mic;
+  $("micHelp").textContent = settings.mic === settings.mic_running
+    ? "Ask the controller for its headset mic. Applies after a restart."
+    : `Changed: restart the dongle to turn the mic ${settings.mic ? "on" : "off"}.`;
+  $("logOn").checked = settings.logs;
+}
+
+/* sparklines: one series each, hover for the value */
+function spark(id, title, data, unit, opts = {}) {
+  const host = $(id);
+  if (!host._svg) {
+    host.innerHTML = `<div class="lbl"><span>${title}</span><b></b></div><svg viewBox="0 0 300 44" preserveAspectRatio="none" role="img" aria-label="${title}, last minute"></svg>`;
+    host._svg = host.querySelector("svg");
+    host._val = host.querySelector("b");
+    host._svg.addEventListener("mousemove", (e) => sparkHover(host, e));
+    host._svg.addEventListener("mouseleave", () => { $("tip").style.display = "none"; host._hx = null; drawSpark(host); });
+  }
+  host._data = data; host._unit = unit; host._opts = opts;
+  const last = data.length ? data[data.length - 1] : null;
+  host._val.textContent = last == null ? "–" : fmtVal(last, unit);
+  drawSpark(host);
+}
+const fmtVal = (v, unit) => (Number.isInteger(v) ? v : v.toFixed(1)) + unit;
+function sparkRange(host) {
+  const d = host._data.filter((v) => v != null);
+  let lo = host._opts.min ?? Math.min(...d, 0), hi = host._opts.max ?? Math.max(...d, 1);
+  if (host._opts.minSpan && hi - lo < host._opts.minSpan) hi = lo + host._opts.minSpan;
+  if (hi === lo) hi = lo + 1;
+  return [lo, hi];
+}
+function drawSpark(host) {
+  const svg = host._svg, d = host._data, W = 300, H = 44, pad = 3;
+  const [lo, hi] = sparkRange(host);
+  const x = (i) => (i + HIST - d.length) / (HIST - 1) * W;
+  const y = (v) => H - pad - (v - lo) / (hi - lo) * (H - 2 * pad);
+  let path = "", start = null, lastPt = null;
+  d.forEach((v, i) => {
+    if (v == null) { start = null; return; }
+    path += (start === null ? "M" : "L") + x(i).toFixed(1) + "," + y(v).toFixed(1);
+    if (start === null) start = i;
+    lastPt = [x(i), y(v)];
+  });
+  let area = "";
+  if (path && start !== null) area = path + `L${x(d.length - 1).toFixed(1)},${H}L${x(start).toFixed(1)},${H}Z`;
+  let hover = "";
+  if (host._hx != null && d[host._hx] != null) {
+    hover = `<line class="hover" x1="${x(host._hx)}" x2="${x(host._hx)}" y1="0" y2="${H}" vector-effect="non-scaling-stroke"/>`;
+  }
+  svg.innerHTML = `<line class="base" x1="0" x2="${W}" y1="${H - 0.5}" y2="${H - 0.5}" vector-effect="non-scaling-stroke"/>` +
+    (area ? `<path class="area" d="${area}"/>` : "") +
+    `<path class="line" d="${path}" vector-effect="non-scaling-stroke"/>` + hover;
+}
+function sparkHover(host, e) {
+  const r = host._svg.getBoundingClientRect();
+  const d = host._data;
+  const fx = (e.clientX - r.left) / r.width * (HIST - 1) - (HIST - d.length);
+  const i = Math.max(0, Math.min(d.length - 1, Math.round(fx)));
+  host._hx = i;
+  drawSpark(host);
+  const t = $("tip");
+  if (d[i] == null) { t.style.display = "none"; return; }
+  const ago = d.length - 1 - i;
+  t.textContent = `${fmtVal(d[i], host._unit)} · ${ago ? ago + " s ago" : "now"}`;
+  t.style.display = "block";
+  t.style.left = Math.min(e.clientX + 12, innerWidth - t.offsetWidth - 8) + "px";
+  t.style.top = (r.top - 30) + "px";
+}
+function push(arr, v) { arr.push(v); if (arr.length > HIST) arr.shift(); }
+
+function renderStats(m) {
+  const now = performance.now();
+  const dt = prev ? Math.max(0.2, (m.up - prev.up) / 1000) : null;
+  const rate = (f) => (prev && dt ? (f(m) - f(prev)) / dt : null);
+
+  // controller
+  const c = m.ctl;
+  const live = c.game || c.state === "input";
+  pill($("ctlPill"), live ? "Connected" : c.disp ? "Connecting" : c.sta ? "On Wi-Fi" : "Waiting", live ? "good" : c.disp || c.sta ? "warn" : "");
+  const states = { none: "No session", "dtls-connected": "Secure link up", "get-controller-state-sent": "Asking the controller", "controller-state-received": "Controller answered", ready: "Ready", input: "Ready, input flowing" };
+  $("ctlState").textContent = states[c.state] || c.state;
+  $("ctlGame").textContent = c.game ? "Up" : "Down";
+  const rssi = c.rssi;
+  $("ctlRssi").innerHTML = rssi == null ? '<span class="sub">–</span>' :
+    `<span class="${rssi >= -60 ? "good-t" : rssi >= -72 ? "warn-t" : "bad-t"}">${rssi} dBm</span> <span class="sub">${rssi >= -60 ? "good" : rssi >= -72 ? "fair" : "weak"}</span>`;
+  push(hist.rssi, rssi);
+  spark("spRssi", "Signal, last minute", hist.rssi, " dBm", { min: -95, max: -30 });
+
+  // headphones
+  const a = m.audio, u = m.usb;
+  pill($("audPill"), a.route ? (u.play ? "Playing" : "Route open") : "Off", a.route && u.play ? "good" : a.route ? "warn" : "");
+  $("audPlay").textContent = yesno(u.play);
+  const fps = rate((s) => s.audio.sent);
+  $("audRate").innerHTML = fps == null ? "–" : `${fps.toFixed(0)}/s <span class="sub">of 50</span>`;
+  const kbps = rate((s) => s.audio.bytes);
+  $("audKbps").textContent = kbps == null ? "–" : (kbps * 8 / 1000).toFixed(0) + " kbps";
+  const und = rate((s) => s.audio.under);
+  const und10 = und == null ? null : Math.round(und * 10);
+  $("audUnder").innerHTML = und10 == null ? "–" : `<span class="${und10 ? (und10 > 2 ? "bad-t" : "warn-t") : ""}">${und10} per 10 s</span> <span class="sub">${a.under} total</span>`;
+  $("audTrim").textContent = `${a.trim} / ${a.lost}` + (u.ovf ? ` · ${u.ovf} USB overflows` : "");
+  const encN = prev ? m.audio.enc - prev.audio.enc : 0;
+  const encAvg = encN > 0 ? (m.audio.enc_us - prev.audio.enc_us) / encN / 1000 : null;
+  $("audEnc").innerHTML = encAvg == null ? `<span class="sub">idle · complexity ${a.cplx}</span>` :
+    `<span class="${encAvg > 10 ? "bad-t" : encAvg > 7 ? "warn-t" : ""}">${encAvg.toFixed(1)} ms</span> <span class="sub">max ${(a.enc_max / 1000).toFixed(1)} · cx ${a.cplx}</span>`;
+  $("audVol").textContent = (u.mute[0] ? "Muted · " : "") + (u.vol[0] / 256).toFixed(1) + " dB";
+  push(hist.under, und10);
+  spark("spUnder", "Underruns per 10 s", hist.under, "", { min: 0, minSpan: 5 });
+
+  // microphone
+  const mi = m.mic;
+  const mrate = rate((s) => s.mic.pkts);
+  const streaming = mi.age >= 0 && mi.age < 1500;
+  const micOn = settings ? settings.mic_running : true;
+  pill($("micPill"), !micOn ? "Off" : mi.talk ? "Talking" : streaming && (mrate || 0) > 0 ? "Streaming" : settings?.ptt ? "Hold Assistant" : "Quiet", !micOn ? "" : mi.talk || (mrate || 0) > 0 ? "good" : "");
+  $("micRate").innerHTML = mrate == null ? "–" : `${mrate.toFixed(0)} packets/s <span class="sub">${mi.dec} decoded</span>`;
+  $("micTalk").textContent = settings?.ptt ? (mi.talk ? "Talking (Assistant held)" : "Released") : "Off (always on)";
+  $("micLost").textContent = `${mi.lost} / ${mi.err}` + (mi.drop ? ` · ${mi.drop} dropped` : "");
+  const peakDb = mi.peak > 0 ? Math.round(20 * Math.log10(mi.peak / 32768)) : null;
+  $("micPeak").textContent = peakDb == null ? "Silent" : peakDb + " dBFS";
+  $("micRec").textContent = yesno(u.rec) + (u.rec ? ` · ${(u.vol[1] / 256).toFixed(1)} dB${u.mute[1] ? ", muted" : ""}` : "");
+  $("micUnder").textContent = `${u.munder} / ${u.mskip}`;
+  push(hist.peak, peakDb == null ? -60 : Math.max(-60, peakDb));
+  spark("spPeak", "Mic peak, last minute", hist.peak, " dBFS", { min: -60, max: 0 });
+
+  // board
+  $("sysMode").textContent = MODES[u.mode] + (u.mounted ? "" : " (not opened by the host)");
+  $("sysUp").textContent = fmtUp(m.up);
+  $("sysHeap").innerHTML = `${fmtBytes(m.heap[0])} <span class="sub">lowest ${fmtBytes(m.heap[1])}</span>`;
+  $("sysPsram").textContent = fmtBytes(m.heap[2]);
+  const cpu = m.cpu.map((v) => (v < 0 ? null : v));
+  push(hist.cpu0, cpu[0]); push(hist.cpu1, cpu[1]);
+  spark("spCpu0", "CPU core 0", hist.cpu0, "%", { min: 0, max: 100 });
+  spark("spCpu1", "CPU core 1", hist.cpu1, "%", { min: 0, max: 100 });
+  if (settings && settings.mode !== u.mode) { settings.mode = u.mode; renderSettings(); }
+
+  prev = m; prevAt = now;
+}
+
+function renderTasks(m) {
+  const rows = m.list.slice().sort((a, b) => b[1] - a[1]);
+  const max = Math.max(1, ...rows.map((r) => r[1]));
+  $("tasks").tBodies[0].innerHTML = rows.map(([name, pm, prio, stack]) =>
+    `<tr><td>${esc(name)}</td><td class="n"><span class="bar" style="width:${Math.round(pm / max * 60)}px"></span>${(pm / 10).toFixed(1)}%</td><td class="n">${prio}</td><td class="n${stack < 512 ? " warn-t" : ""}">${stack} B</td></tr>`).join("");
+}
+
+/* live input: the XInput button bits */
+const BTN = [["A", 0x1000], ["B", 0x2000], ["X", 0x4000], ["Y", 0x8000], ["LB", 0x100], ["RB", 0x200], ["Back ⋯", 0x20], ["Start ≡", 0x10], ["Stadia", 0x400], ["↑", 1], ["↓", 2], ["←", 4], ["→", 8], ["L3", 0x40], ["R3", 0x80]];
+const EXTRA = [["Capture", 1], ["Assistant", 2]];
+$("btns").innerHTML = [...BTN, ...EXTRA].map(([n]) => `<span>${n}</span>`).join("");
+function renderPad(p) {
+  const spans = $("btns").children;
+  BTN.forEach(([, bit], i) => spans[i].classList.toggle("on", !!(p.b & bit)));
+  EXTRA.forEach(([, bit], i) => spans[BTN.length + i].classList.toggle("on", !!(p.x & bit)));
+  const place = (el, x, y, pressed) => {
+    el.firstElementChild.style.left = 50 + x / 32768 * 42 + "%";
+    el.firstElementChild.style.top = 50 - y / 32768 * 42 + "%";
+    el.classList.toggle("pressed", pressed);
+  };
+  place($("stL"), p.lx, p.ly, !!(p.b & 0x40));
+  place($("stR"), p.rx, p.ry, !!(p.b & 0x80));
+  $("trL").style.width = p.lt / 255 * 100 + "%";
+  $("trR").style.width = p.rt / 255 * 100 + "%";
+}
+
+/* log */
+const logEl = $("log");
+let logText = [];
+function logLine(line) {
+  const clean = line.replace(/\x1b\[[0-9;]*m/g, "");
+  logText.push(clean);
+  if (logText.length > 2000) logText.shift();
+  const stick = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 20;
+  const div = document.createElement("div");
+  div.textContent = clean;
+  if (/^[EW] \(/.test(clean)) div.className = clean[0];
+  logEl.appendChild(div);
+  while (logEl.childElementCount > 2000) logEl.firstElementChild.remove();
+  if (stick) logEl.scrollTop = logEl.scrollHeight;
+}
+$("logOn").addEventListener("change", (e) => link?.send(`logs ${e.target.checked ? "on" : "off"}`));
+$("logClear").onclick = () => { logEl.innerHTML = ""; logText = []; };
+$("logSave").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([logText.join("\n") + "\n"], { type: "text/plain" }));
+  a.download = `stadiacast-dongle-${new Date().toISOString().replace(/[:.]/g, "-")}.log`;
+  a.click();
+};
+
+/* ---- demo: a pretend dongle, for a look without one ---- */
+const DEMO = new URLSearchParams(location.search).has("demo");
+function demoLink() {
+  const st = { mode: 0, gain: 0, complexity: 8, mic: true, mic_running: true, ptt: true, logs: false };
+  const c = { up: 734000, sent: 0, bytes: 0, under: 0, enc: 0, enc_us: 0, mpk: 0, mdec: 0, upk: 0, mupk: 0 };
+  const emit = (o) => setTimeout(() => onLine(JSON.stringify(o)), 30);
+  const sendSettings = () => emit({ t: "settings", ...st });
+  let tick = 0;
+  const timer = setInterval(() => {
+    tick++;
+    c.up += 1000;
+    const talk = tick % 12 < 4;
+    c.sent += 50; c.bytes += 50 * 240; c.enc += 50; c.enc_us += 50 * (st.complexity * 750 + Math.random() * 1500);
+    if (talk && Math.random() < 0.35) c.under += 1;
+    if (talk || !st.ptt) { c.mpk += 50; c.mdec += 50; }
+    emit({ t: "stats", up: c.up, cpu: [Math.round(38 + Math.random() * 10 + (talk ? 20 : 0)), Math.round(22 + Math.random() * 8)], heap: [61440 + Math.round(Math.random() * 900), 48210, 31.2e6],
+      ctl: { state: "input", disp: true, game: true, rssi: Math.round(-52 - Math.random() * 6), sta: 1 },
+      audio: { route: true, cplx: st.complexity, enc: c.enc, sent: c.sent, lost: 0, trim: 2, under: c.under, resync: 0, bytes: c.bytes, enc_us: Math.round(c.enc_us), enc_max: 9800 },
+      mic: { pkts: c.mpk, muted: 0, dec: c.mdec, lost: 3, err: 0, drop: 0, peak: talk ? 4000 + Math.round(Math.random() * 9000) : 0, age: talk ? 10 : 9000, talk },
+      usb: { mode: st.mode, mounted: true, play: true, rec: true, vol: [0, 0], mute: [false, false], pkts: tick * 8000, fail: 0, ovf: 0, mpkts: tick * 8000, munder: 1, mskip: 0, mdrop: 0, mbuf: 1900, cdrop: 0 } });
+    if (tick % 2 === 0) emit({ t: "tasks", ms: 2000, list: [["audio", 312 + Math.round(Math.random() * 40), 6, 31000], ["rtc", 96, 5, 9100], ["mic", talk ? 180 : 4, 4, 30500], ["IDLE0", 420, 0, 800], ["IDLE1", 700, 0, 820], ["tiT", 38, 18, 2100], ["console", 6, 2, 3900], ["esp_timer", 9, 22, 2500], ["https", 2, 5, 5200], ["TinyUSB", 22, 5, 2600]] });
+    const ang = tick / 3;
+    emit({ t: "pad", b: talk ? 0x1000 : 0, x: talk ? 2 : 0, lt: (tick * 40) % 255, rt: 0, lx: Math.round(Math.cos(ang) * 20000), ly: Math.round(Math.sin(ang) * 20000), rx: 0, ry: 0 });
+    if (st.logs) setTimeout(() => onLine("I (" + c.up + ") audio: 500 frames sent in 10 s (240 B avg), 0 not sent, 0 trimmed, 1 underruns, 0 resyncs; encode avg 6120 us, max 9800 us"), 40);
+  }, 1000);
+  return {
+    send(line) {
+      const [cmd, k, v] = line.split(" ");
+      if (cmd === "hello") { emit({ t: "info", fw: "demo", project: "stadiacast_dongle", built: "Nov 15 2026 18:00:00", idf: "v5.5.1", chip: "ESP32-P4 rev v1.3", cores: 2, mac: "00:00:00:00:00:00", ssid: "stadiacast-dongle", channel: 6, audio: true, modes: MODES }); sendSettings(); }
+      else if (cmd === "get") sendSettings();
+      else if (cmd === "set") { const n = +v; if (k === "mode") st.mode = n; else if (k === "gain") st.gain = n; else if (k === "complexity") st.complexity = n; else if (k === "mic") st.mic = !!n; else if (k === "ptt") st.ptt = !!n; emit({ t: "ok", key: k }); sendSettings(); }
+      else if (cmd === "logs") { st.logs = k === "on"; sendSettings(); }
+      else if (cmd === "defaults") { Object.assign(st, { gain: 0, complexity: 8, mic: true, ptt: true }); sendSettings(); }
+      else if (cmd === "reboot") toast("The demo doesn't restart");
+    },
+    close() { clearInterval(timer); },
+  };
+}
+
+/* ---- start ---- */
+$("btnConnect").onclick = connectClick;
+$("btnDisconnect").onclick = disconnectClick;
+if (DEMO) {
+  document.title = "Stadiacast Dongle Console (demo)";
+  $("intro").querySelector("h2").textContent = "Demo: a pretend dongle. Press Connect.";
+  connectClick();
+} else if (!("serial" in navigator)) {
+  $("noSerial").hidden = false;
+  $("btnConnect").disabled = true;
+} else {
+  wantConnected = true; // reconnect to a dongle picked on an earlier visit
+  tryReconnect().then(() => { if (!link) { wantConnected = false; } });
+}
+</script>
+</body>
+</html>

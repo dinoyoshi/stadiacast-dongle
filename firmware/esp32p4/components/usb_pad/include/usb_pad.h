@@ -59,6 +59,8 @@ typedef void (*usb_pad_rumble_cb_t)(uint8_t large, uint8_t small, void *arg);
  * usb_pad_audio_read() returns what the host plays, usb_pad_mic_write() feeds the microphone.
  * The Switch Pro mode is the gamepad alone. */
 esp_err_t usb_pad_start(usb_pad_mode_t mode, usb_pad_rumble_cb_t rumble_cb, void *arg, bool audio);
+/* Before usb_pad_start(): also be a USB serial port, the console (usb_pad_console_*). */
+void usb_pad_enable_console(void);
 /* Leave the bus and come back in another mode. Not from the USB task. */
 esp_err_t usb_pad_set_mode(usb_pad_mode_t mode);
 usb_pad_mode_t usb_pad_mode(void);
@@ -75,3 +77,28 @@ size_t usb_pad_audio_read(int16_t *pcm, size_t max_frames, uint32_t timeout_ms);
  * a backlog is trimmed, an underrun is filled with silence. Dropped while the board has no
  * microphone. */
 void usb_pad_mic_write(const int16_t *pcm, size_t frames);
+
+/* What the headset did, for the console. Counters run from power-up. */
+typedef struct {
+    bool playing, recording;       /* the host streams to the headphones / from the microphone */
+    bool mute[2];                  /* headphones, microphone */
+    int16_t volume[2];             /* 1/256 dB */
+    uint32_t packets, failed;      /* headphone packets from the host */
+    uint32_t overflows;            /* headphone packets that did not fit (the encoder fell behind) */
+    uint32_t mic_packets, mic_underruns, mic_skips, mic_dropped;
+    uint32_t mic_buffered;         /* samples waiting for the host */
+} usb_pad_audio_stats_t;
+void usb_pad_audio_stats(usb_pad_audio_stats_t *st);
+
+/* ---- the console's USB serial port ------------------------------------------------------ */
+
+#define USB_CONSOLE_LINE_MAX 160
+/* The host has the port open (DTR, or it sent a line in the last few seconds). */
+bool usb_console_active(void);
+/* Queue bytes for the host, best whole lines: all of it or nothing (false: closed or full).
+ * Any task. */
+bool usb_console_write(const char *s, size_t len);
+/* Writes refused because the buffer was full. */
+uint32_t usb_console_dropped(void);
+/* One line the host sent, without its newline, into out (USB_CONSOLE_LINE_MAX bytes). */
+bool usb_console_read_line(char *out, uint32_t timeout_ms);

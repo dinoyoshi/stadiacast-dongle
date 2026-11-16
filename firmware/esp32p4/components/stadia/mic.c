@@ -52,6 +52,7 @@ static struct {
     uint32_t queued[2], overflow;
     int64_t last_rx_ms; /* the last packet received, queued or not */
     uint32_t muted;     /* packets dropped while not talking */
+    uint32_t t_packets, t_muted, t_overflow; /* from power-up, for the console (mic_get_stats) */
     bool talk_held;
     int64_t talk_released_ms;
     port_event_t *ev;
@@ -68,6 +69,8 @@ static struct {
     int peak;
     int64_t stats_at;
     int logged;
+    volatile uint32_t t_decoded, t_lost, t_errors;
+    volatile int t_peak;
 } M;
 
 void stadia_set_mic_callback(stadia_mic_cb_t cb, void *arg)
@@ -89,6 +92,7 @@ void mic_on_rtp(rtc_link_t *L, int link, const uint8_t *rtp, size_t n)
     M.last_rx_ms = now;
     if (g_cfg.mic_push_to_talk && !M.talk_held && now - M.talk_released_ms >= TALK_TAIL_MS) {
         M.muted++;
+        M.t_muted++;
         port_unlock();
         return;
     }
@@ -96,6 +100,7 @@ void mic_on_rtp(rtc_link_t *L, int link, const uint8_t *rtp, size_t n)
         M.head = (M.head + 1) % QUEUE_LEN;
         M.count--;
         M.overflow++;
+        M.t_overflow++;
     }
     pkt_t *p = &M.q[(M.head + M.count) % QUEUE_LEN];
     p->len = (uint16_t)plen;
@@ -105,6 +110,7 @@ void mic_on_rtp(rtc_link_t *L, int link, const uint8_t *rtp, size_t n)
     memcpy(p->data, payload, plen);
     M.count++;
     M.queued[link ? 1 : 0]++;
+    M.t_packets++;
     port_unlock();
     port_event_set(M.ev);
 }
@@ -132,6 +138,7 @@ static void deliver(const int16_t *pcm, int frames)
     for (int i = 0; i < frames; i++) {
         int v = pcm[i] < 0 ? -pcm[i] : pcm[i];
         if (v > M.peak) M.peak = v;
+        if (v > M.t_peak) M.t_peak = v;
     }
     M.samples += (uint32_t)frames;
     port_lock();
@@ -158,6 +165,7 @@ static void decode(const pkt_t *p, int16_t *pcm)
         int gap = (uint16_t)(p->seq - M.last_seq) - 1;
         if (gap < 0 || gap > 1000) return; /* late or repeated */
         M.lost += (uint32_t)gap;
+        M.t_lost += (uint32_t)gap;
         int frame = opus_packet_get_nb_samples(p->data, p->len, RATE);
         for (int i = 0; i < gap && i < MAX_PLC && frame > 0; i++) {
             int n = opus_decode(M.dec, NULL, 0, pcm, frame, 0);
@@ -167,6 +175,7 @@ static void decode(const pkt_t *p, int16_t *pcm)
     M.last_seq = p->seq;
     int n = opus_decode(M.dec, p->data, p->len, pcm, MAX_FRAME, 0);
     if (n <= 0) {
+        M.t_errors++;
         if (M.errors++ < 5) {
             SLOGW(TAG, "not Opus? %s (PT %u, %u bytes, first %02x %02x %02x %02x)", opus_strerror(n), p->pt, p->len,
                   p->data[0], p->len > 1 ? p->data[1] : 0, p->len > 2 ? p->data[2] : 0, p->len > 3 ? p->data[3] : 0);
@@ -174,6 +183,7 @@ static void decode(const pkt_t *p, int16_t *pcm)
         return;
     }
     M.decoded++;
+    M.t_decoded++;
     deliver(pcm, n);
 }
 
@@ -287,4 +297,22 @@ bool mic_init(void)
     }
     /* below the rtc task and the headphones' encoder: the microphone can wait a few ms */
     return port_spawn_low(mic_task, NULL, "mic", STADIA_AUDIO_STACK);
+}
+
+void mic_get_stats(stadia_stats_t *st)
+{
+    port_lock();
+    st->mic_packets = M.t_packets;
+    st->mic_muted = M.t_muted;
+    st->mic_dropped = M.t_overflow;
+    int64_t last = M.last_rx_ms;
+    port_unlock();
+    st->mic_decoded = M.t_decoded;
+    st->mic_lost = M.t_lost;
+    st->mic_errors = M.t_errors;
+    st->mic_peak = M.t_peak;
+    M.t_peak = 0;
+    st->mic_talking = mic_talking();
+    int64_t age = port_now_ms() - last;
+    st->mic_age_ms = !last ? -1 : age > INT32_MAX ? INT32_MAX : (int32_t)age;
 }

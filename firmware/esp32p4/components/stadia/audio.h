@@ -10,3 +10,5 @@ void audio_set_route(bool open);
 void audio_tick(rtc_link_t *L);
 /* The rtc task's poll interval: short while frames are flowing. */
 int audio_poll_ms(void);
+/* The headset audio's part of stadia_get_stats(). */
+void audio_get_stats(stadia_stats_t *st);

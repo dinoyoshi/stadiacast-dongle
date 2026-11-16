@@ -61,6 +61,17 @@ config DONGLE_PAD_MODE
         button with A (Xbox 360), B (DualShock 4), X (Switch Pro) or Y (HID gamepad) for 1.5 s.
         The board remembers the last one picked.
 
+config DONGLE_CONSOLE
+    bool "USB serial console for the web console"
+    default y
+    select FREERTOS_USE_TRACE_FACILITY
+    select FREERTOS_GENERATE_RUN_TIME_STATS
+    help
+        Besides the gamepad (and the headset), the board is a USB serial port that the web
+        console (firmware/esp32p4/console, Chrome or Edge) reads live stats from and changes
+        settings through: the mode, the headphone gain, the Opus complexity, the microphone
+        and push to talk. Also FreeRTOS's run time stats, for the CPU figures.
+
 config DONGLE_STATUS_LED_GPIO
     int "Status LED GPIO (-1 for none)"
     range -1 54

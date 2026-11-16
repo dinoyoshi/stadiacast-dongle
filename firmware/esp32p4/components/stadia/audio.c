@@ -67,6 +67,11 @@ static struct {
     uint32_t sent, dropped, underruns, resyncs;
     int64_t stats_at;
     int64_t next_slot_us; /* the pacer's next send time, 0 = waiting for a first frame */
+    /* from power-up, for the console (audio_get_stats) */
+    volatile int want_complexity; /* 0: no change asked for */
+    uint32_t t_encoded, t_trimmed, t_enc_us_max; /* under port_lock */
+    uint64_t t_bytes, t_enc_us;
+    volatile uint32_t t_sent, t_dropped, t_underruns, t_resyncs; /* the rtc task's */
 } A;
 
 void audio_init(const stadia_config_t *cfg)
@@ -116,6 +121,12 @@ static void encode_frame(void)
     }
     A.last_frame_us = now;
 
+    int want = A.want_complexity;
+    if (want && want != A.complexity) {
+        A.complexity = want;
+        opus_encoder_ctl(A.enc, OPUS_SET_COMPLEXITY(want));
+        SLOGI(TAG, "Opus complexity %d", want);
+    }
     uint8_t out[MAX_OPUS];
     int n = opus_encode(A.enc, A.acc, FRAME_SAMPLES, out, sizeof(out));
     uint32_t took = (uint32_t)(port_now_us() - now);
@@ -128,6 +139,7 @@ static void encode_frame(void)
         A.head = (A.head + 1) % QUEUE_LEN;
         A.count--;
         A.trimmed++;
+        A.t_trimmed++;
     }
     frame_t *f = &A.q[(A.head + A.count) % QUEUE_LEN];
     f->len = (uint16_t)n;
@@ -138,6 +150,10 @@ static void encode_frame(void)
     A.encoded++;
     A.bytes += (uint32_t)n;
     A.enc_us_sum += took;
+    A.t_encoded++;
+    A.t_bytes += (uint32_t)n;
+    A.t_enc_us += took;
+    if (took > A.t_enc_us_max) A.t_enc_us_max = took;
     if (took > A.enc_us_max) A.enc_us_max = took;
     A.last_queued_ms = port_now_ms();
     port_unlock();
@@ -196,12 +212,14 @@ static bool slot_due(void)
     if (now < A.next_slot_us) return false;
     if (now - A.next_slot_us > 10 * SLOT_US) { /* a stall: start a new grid rather than burst */
         A.resyncs++;
+        A.t_resyncs++;
         A.next_slot_us = count ? now + PACE_HEADROOM_US : 0;
         return false;
     }
     A.next_slot_us += SLOT_US;
     if (!count) {
         A.underruns++;
+        A.t_underruns++;
         if (port_now_ms() - A.last_queued_ms > 200) A.next_slot_us = 0; /* the stream stopped */
         return false;
     }
@@ -235,8 +253,10 @@ void audio_tick(rtc_link_t *L)
         if (rtc_link_send_srtp(L, pkt, 12 + f.len, sizeof(pkt))) {
             A.seq++;
             A.sent++;
+            A.t_sent++;
         } else {
             A.dropped++;
+            A.t_dropped++;
         }
     }
 
@@ -258,4 +278,30 @@ void audio_tick(rtc_link_t *L)
         A.sent = A.dropped = A.underruns = A.resyncs = 0;
         A.stats_at = now;
     }
+}
+
+void stadia_audio_set_complexity(int complexity)
+{
+    if (complexity < 1) complexity = 1;
+    if (complexity > 10) complexity = 10;
+    A.want_complexity = complexity;
+    if (!A.enc) A.complexity = complexity; /* before the first frame: the encoder starts with it */
+}
+
+void audio_get_stats(stadia_stats_t *st)
+{
+    st->audio_route = A.route;
+    st->audio_complexity = (uint8_t)(A.want_complexity ? A.want_complexity : A.complexity);
+    port_lock();
+    st->audio_encoded = A.t_encoded;
+    st->audio_trimmed = A.t_trimmed;
+    st->audio_bytes = A.t_bytes;
+    st->audio_enc_us = A.t_enc_us;
+    st->audio_enc_us_max = A.t_enc_us_max;
+    A.t_enc_us_max = 0;
+    port_unlock();
+    st->audio_sent = A.t_sent;
+    st->audio_not_sent = A.t_dropped;
+    st->audio_underruns = A.t_underruns;
+    st->audio_resyncs = A.t_resyncs;
 }

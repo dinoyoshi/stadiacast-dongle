@@ -24,3 +24,23 @@ usb_pad_mode_t pad_mode_load(void);
 /* The 100 ms tick that times the combos and watches the board's BOOT button (next mode). */
 void pad_mode_start(void);
 void pad_mode_filter(usb_pad_state_t *st);
+
+/* The settings the console changes (console.c), kept in NVS. */
+typedef struct {
+    int8_t gain_db;     /* -12..0: the headphones' level before the Opus encoder */
+    uint8_t complexity; /* Opus, 1..10 */
+    bool mic;           /* ask the controller for its microphone (from the next start) */
+    bool ptt;           /* push to talk */
+    bool mic_running;   /* what this start does (mic as it was at power-up) */
+} dongle_settings_t;
+/* The saved settings (Kconfig's where none are saved). Before usb_pad_start and stadia_start. */
+void settings_load(dongle_settings_t *out);
+/* The headphones' gain as Q15 (32768 = 0 dB), for the audio task. */
+int32_t console_gain_q15(void);
+/* The console task, after stadia_start (CONFIG_DONGLE_CONSOLE). */
+void console_start(bool mic_running);
+/* The input the host gets, for the console's live view. Any task. */
+void console_pad(const usb_pad_state_t *st);
+/* Change the gamepad mode as the combos do (saved, the board leaves the bus and comes back).
+ * False while a change is under way. */
+bool pad_mode_request(usb_pad_mode_t mode);

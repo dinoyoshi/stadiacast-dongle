@@ -71,6 +71,10 @@ offset 0: `esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle.bin`, or in 
 | Opus encoder complexity | 8 |
 | controller mode at the first power-up | Xbox 360 |
 | status LED GPIO (-1: none) | 3 |
+| USB serial console for the web console | on |
+
+The headphone gain, Opus complexity, microphone and push to talk can also be changed at run time
+from the web console (below); what it sets is saved on the board and wins over menuconfig.
 
 ## First-time controller setup
 
@@ -150,6 +154,32 @@ and Android drive without anything to install.
   Xbox driver does not take the whole device. Games still see an XInput pad ("Xbox Pad" in
   Steam), and the headphones get the standard USB audio driver. With the headphones turned off
   in menuconfig the dongle stays 045E:028E.
+
+## Web console
+
+A page that shows what the dongle is doing and changes its settings, over USB: plug the dongle
+into the computer, open the console in Chrome or Edge (desktop) and press **Connect**.
+
+- Hosted: `https://dinoyoshi.github.io/stadiacast/` (once GitHub Pages is on, see below), or
+  open `console/index.html` from a checkout. Add `?demo` to look around without a dongle.
+- Live: controller session and Wi-Fi signal, headphone frames, bitrate, underruns and encode
+  time, microphone packets and level, CPU per core, each task's CPU share, free memory, the
+  controller's input, and the firmware's log.
+- Settings: gamepad mode, headphone gain (-12 to 0 dB before the Opus encoder), Opus complexity,
+  microphone (after a restart), push to talk; restart and reset buttons.
+
+The dongle carries a USB serial port for it in every mode (`/dev/ttyACM*` on Linux, a COM port
+on Windows, no driver needed). The page uses Web Serial, which Firefox and Safari don't have. On
+Linux your user needs to be in the `dialout` group (`uucp` on Arch). After a mode change the
+dongle comes back as another USB device: the browser reconnects by itself once each mode has
+been picked in the Connect dialog once.
+
+The same port works from a terminal (`screen /dev/ttyACM0`): type `hello`, `get`,
+`set gain -3`, `set complexity 5`, `set mode 1`, `logs on`, `reboot`. The protocol is described
+at the top of `main/console.c`.
+
+GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Actions". The
+`Web console (GitHub Pages)` workflow then publishes `console/` on every change to it on `main`.
 
 ## Known limits
 

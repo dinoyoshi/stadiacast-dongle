@@ -82,6 +82,14 @@ static void start_switch(usb_pad_mode_t mode)
     if (xTaskCreate(switch_task, "pad_mode", 4096, (void *)(intptr_t)mode, 5, NULL) != pdPASS) M.busy = false;
 }
 
+bool pad_mode_request(usb_pad_mode_t mode)
+{
+    if (mode >= USB_PAD_MODE_COUNT || M.busy) return false;
+    if (mode == usb_pad_mode()) return true;
+    start_switch(mode);
+    return M.busy;
+}
+
 static void tick(void *arg)
 {
     /* BOOT: a press (two ticks low) steps to the next mode */
