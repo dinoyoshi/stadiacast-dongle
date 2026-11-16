@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 list(APPEND EXTRA_COMPONENT_DIRS
     ${CMAKE_CURRENT_LIST_DIR}/../core/stadia
     ${CMAKE_CURRENT_LIST_DIR}/../core/gamepad
+    ${CMAKE_CURRENT_LIST_DIR}/../core/dongle
     ${CMAKE_CURRENT_LIST_DIR}/../core/opus
     ${CMAKE_CURRENT_LIST_DIR}/../platform/port_api
     ${CMAKE_CURRENT_LIST_DIR}/../platform/port_esp_idf)

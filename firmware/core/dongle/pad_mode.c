@@ -8,26 +8,21 @@
  *   Stadia + X   Switch Pro    (3 pulses)
  *   Stadia + Y   HID gamepad   (4 pulses)
  * While the Stadia button is held with a face button, neither goes to the host.
- * A press of the board's BOOT button (GPIO35) steps to the next mode, controller or not. The
- * board's LED blinks the mode number either way.
+ * A press of the board's button (BOOT, GPIO35, on the FireBeetle 2 ESP32-P4) steps to the next
+ * mode, controller or not. The board's LED blinks the mode number either way.
  */
-#include "dongle.h"
-#include "stadia.h"
+#include "dongle_board.h"
+#include "dongle_core.h"
+#include "pad_modes.h"
+#include "stadia_port.h"
 
-#include "driver/gpio.h"
-#include "esp_log.h"
-#include "esp_timer.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "nvs.h"
-#include "sdkconfig.h"
+#include <stdint.h>
 
 static const char *TAG = "pad_mode";
 
 #define HOLD_US (1500 * 1000)
 #define TICK_US (100 * 1000)
 #define FACE (USB_PAD_A | USB_PAD_B | USB_PAD_X | USB_PAD_Y)
-#define BOOT_GPIO 35 /* low while pressed */
 
 /* The controller reports only changes, so a steady hold is timed by a 100 ms tick. */
 static struct {
@@ -35,84 +30,68 @@ static struct {
     volatile int64_t since;   /* 0: no combo held */
     volatile bool latched;    /* fired: wait for the buttons to be let go */
     volatile bool busy;
-    esp_timer_handle_t tick;
-    int boot_low; /* ticks the BOOT button has been down */
+    port_timer_t *tick;
+    int boot_low; /* ticks the button has been down */
 } M;
 
-usb_pad_mode_t pad_mode_load(void)
+usb_pad_mode_t pad_mode_load(usb_pad_mode_t default_mode)
 {
-    usb_pad_mode_t mode = CONFIG_DONGLE_PAD_MODE;
-    nvs_handle_t h;
+    usb_pad_mode_t mode = default_mode;
     uint8_t v;
-    if (nvs_open("pad", NVS_READONLY, &h) == ESP_OK) {
-        if (nvs_get_u8(h, "mode", &v) == ESP_OK && v < USB_PAD_MODE_COUNT) mode = v;
-        nvs_close(h);
-    }
+    if (board_kv_get_u8("pad", "mode", &v) && v < USB_PAD_MODE_COUNT) mode = v;
     return mode;
-}
-
-static void save(usb_pad_mode_t mode)
-{
-    nvs_handle_t h;
-    if (nvs_open("pad", NVS_READWRITE, &h) != ESP_OK) return;
-    nvs_set_u8(h, "mode", (uint8_t)mode);
-    nvs_commit(h);
-    nvs_close(h);
 }
 
 static void switch_task(void *arg)
 {
     usb_pad_mode_t mode = (usb_pad_mode_t)(intptr_t)arg;
-    ESP_LOGI(TAG, "switching to %s", usb_pad_mode_name(mode));
-    if (usb_pad_set_mode(mode) == ESP_OK) save(mode);
-    status_led_flash((int)usb_pad_mode() + 1);
-    for (int i = 0; i <= (int)usb_pad_mode(); i++) {
+    SLOGI(TAG, "switching to %s", pad_mode_info(mode)->name);
+    if (board_usb_set_mode(mode)) board_kv_set_u8("pad", "mode", (uint8_t)mode);
+    status_led_flash((int)board_usb_mode() + 1);
+    for (int i = 0; i <= (int)board_usb_mode(); i++) {
         stadia_rumble(0, 40000, 40000);
-        vTaskDelay(pdMS_TO_TICKS(200));
+        port_sleep_ms(200);
         stadia_rumble(0, 0, 0);
-        vTaskDelay(pdMS_TO_TICKS(250));
+        port_sleep_ms(250);
     }
     M.busy = false;
-    vTaskDelete(NULL);
 }
 
 static void start_switch(usb_pad_mode_t mode)
 {
     M.busy = true;
-    if (xTaskCreate(switch_task, "pad_mode", 4096, (void *)(intptr_t)mode, 5, NULL) != pdPASS) M.busy = false;
+    if (!port_spawn(switch_task, (void *)(intptr_t)mode, "pad_mode", 4096)) M.busy = false;
 }
 
 bool pad_mode_request(usb_pad_mode_t mode)
 {
     if (mode >= USB_PAD_MODE_COUNT || M.busy) return false;
-    if (mode == usb_pad_mode()) return true;
+    if (mode == board_usb_mode()) return true;
     start_switch(mode);
     return M.busy;
 }
 
 static void tick(void *arg)
 {
-    /* BOOT: a press (two ticks low) steps to the next mode */
-    if (gpio_get_level(BOOT_GPIO) == 0) {
+    /* the board's button: a press (two ticks down) steps to the next mode */
+    if (board_button_down()) {
         if (++M.boot_low == 2 && !M.busy) {
-            start_switch((usb_pad_mode_t)((usb_pad_mode() + 1) % USB_PAD_MODE_COUNT));
+            start_switch((usb_pad_mode_t)((board_usb_mode() + 1) % USB_PAD_MODE_COUNT));
         }
     } else {
         M.boot_low = 0;
     }
     int64_t since = M.since;
-    if (!since || M.latched || M.busy || esp_timer_get_time() - since < HOLD_US) return;
+    if (!since || M.latched || M.busy || port_now_us() - since < HOLD_US) return;
     M.latched = true;
     start_switch(M.want);
 }
 
 void pad_mode_start(void)
 {
-    gpio_config_t io = {.pin_bit_mask = 1ULL << BOOT_GPIO, .mode = GPIO_MODE_INPUT, .pull_up_en = GPIO_PULLUP_ENABLE};
-    gpio_config(&io);
-    const esp_timer_create_args_t args = {.callback = tick, .name = "pad_mode"};
-    if (esp_timer_create(&args, &M.tick) != ESP_OK || esp_timer_start_periodic(M.tick, TICK_US) != ESP_OK) {
-        ESP_LOGE(TAG, "no timer: the mode combos and the BOOT button won't work");
+    board_button_init();
+    if (!(M.tick = port_timer_new(tick, NULL, "pad_mode")) || !port_timer_start_periodic(M.tick, TICK_US)) {
+        SLOGE(TAG, "no timer: the mode combos and the board's button won't work");
     }
 }
 
@@ -136,6 +115,6 @@ void pad_mode_filter(usb_pad_state_t *st)
     }
     if (!M.since || want != M.want) {
         M.want = want;
-        M.since = esp_timer_get_time();
+        M.since = port_now_us();
     }
 }

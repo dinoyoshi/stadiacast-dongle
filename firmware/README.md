@@ -14,6 +14,9 @@ firmware/
                        and game sessions, Opus headset audio, the microphone, several players
     gamepad/           the USB gamepad modes (descriptors, reports, the DS4's and Switch Pro's
                        USB protocols), one mode_<name>.c each
+    dongle/            the dongle's own logic: input mapping, the mode combos and the board's
+                       button, rumble settings and test, players, status LED patterns; the
+                       board provides dongle_board.h (key/value store, LED, button, USB)
     opus/              libopus 1.5.2 (git submodule), fixed point
   platform/
     port_api/          stadia_port.h: the OS services the core needs
@@ -21,8 +24,9 @@ firmware/
     port_posix/        stadia_port.h on Linux (the host build)
   host/                the core built for Linux and tested against tests/fake_controller.py
   esp32p4/             the FireBeetle 2 ESP32-P4: an ESP-IDF project with the board's own
-                       code (C6 hotspot, TinyUSB on the P4's high-speed port, LED and BOOT
-                       button, NVS, OTA, NimBLE pairing) and the web console (console/)
+                       code (C6 hotspot, TinyUSB on the P4's high-speed port, dongle_board.h
+                       on NVS and its GPIOs, console, OTA, NimBLE pairing) and the web
+                       console page (console/)
 ```
 
 The core's sources build unchanged for every target: as ESP-IDF components on an ESP32 board
@@ -39,10 +43,11 @@ git submodule update --init
 cmake -S firmware/host -B build-host -DMBEDTLS_DIR=$IDF_PATH/components/mbedtls/mbedtls
 cmake --build build-host
 build-host/gamepad_test                  # every gamepad mode's reports, against known hashes
+build-host/dongle_test                   # core/dongle on a fake board
 firmware/host/run_loopback.sh build-host # a whole controller session against the fake controller
 ```
 
-The `Firmware core on Linux` workflow runs both on every pull request that touches `firmware/`.
+The `Firmware core on Linux` workflow runs all three on every pull request that touches `firmware/`.
 
 ## Adding a gamepad mode
 
@@ -52,21 +57,23 @@ The `Firmware core on Linux` workflow runs both on every pull request that touch
 3. Its entry in the table in `core/gamepad/pad_modes.c`, and the file in
    `core/gamepad/CMakeLists.txt`.
 4. Run `build-host/gamepad_test -v` and add the new mode's hash to `host/gamepad_test.c`.
-5. On the ESP32-P4: the mode's number in `esp32p4/main/Kconfig.projbuild` (`DONGLE_PAD_MODE`), a
-   Stadia + button combo in `esp32p4/main/pad_mode.c` if it should have one, and its name in the
-   web console's mode list (`esp32p4/console/index.html`).
+5. A Stadia + button combo in `core/dongle/pad_mode.c` if it should have one, and on the
+   ESP32-P4 the mode's number in `esp32p4/main/Kconfig.projbuild` (`DONGLE_PAD_MODE`) and its
+   name in the web console's mode list (`esp32p4/console/index.html`).
 
 ## Adding a board
 
-Still in progress: the dongle's own logic (input mapping, mode combos, rumble, players,
-settings, the console and OTA protocols, pairing) still lives in `esp32p4/main/` and moves into
-`core/` next, behind small board interfaces (key/value store, LED and button, hotspot, BLE,
-firmware slots). For now a new board needs:
+Still in progress: the console and OTA protocols and pairing still live in `esp32p4/main/` and
+move into `core/` next. For now a new board needs:
 
 - an implementation of `platform/port_api/include/stadia_port.h` (or `port_esp_idf` on any
   ESP32, `port_posix` on Linux),
+- an implementation of `core/dongle/include/dongle_board.h`: a key/value store, the LED and
+  button (or none), and its USB device's mode and reports. On ESP-IDF it is a component named
+  `dongle_board` (the ESP32-P4's is `esp32p4/components/dongle_board`),
 - a Wi-Fi access point the controller joins, with the board at a fixed address,
 - a USB device stack that sends the reports `core/gamepad` builds (on TinyUSB, the ESP32-P4's
   `esp32p4/components/usb_pad` is the model),
-- a start-up that calls `stadia_start()` and passes input, rumble and audio between the core
-  and the USB side, as `esp32p4/main/main.c` does.
+- a start-up that calls `stadia_start()` and passes input (`dongle_pad_state()`,
+  `pad_mode_filter()`), rumble (`rumble_host()`) and audio between the core and the USB side,
+  as `esp32p4/main/main.c` does.

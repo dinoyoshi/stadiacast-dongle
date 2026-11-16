@@ -1,5 +1,5 @@
 # The firmware's portable core (firmware/core) built for Linux on the POSIX port, then tested:
-# the gamepad modes' reports against their known hashes, and the whole controller session
+# the gamepad modes' reports against their known hashes, core/dongle on a fake board, and the whole controller session
 # against the Python fake controller (firmware/host/run_loopback.sh).
 name: Firmware core on Linux
 
@@ -49,5 +49,7 @@ jobs:
           cmake --build build-host -j "$(nproc)"
       - name: gamepad modes
         run: build-host/gamepad_test -v
+      - name: dongle logic on a fake board
+        run: build-host/dongle_test
       - name: loopback against the fake controller
         run: firmware/host/run_loopback.sh build-host

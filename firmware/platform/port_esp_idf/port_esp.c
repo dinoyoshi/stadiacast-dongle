@@ -127,6 +127,64 @@ bool port_event_wait(port_event_t *ev, int timeout_ms)
     return xSemaphoreTake(ev->sem, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
 }
 
+struct port_mutex {
+    SemaphoreHandle_t sem;
+};
+
+port_mutex_t *port_mutex_new(void)
+{
+    port_mutex_t *m = calloc(1, sizeof(*m));
+    if (m && !(m->sem = xSemaphoreCreateMutex())) {
+        free(m);
+        m = NULL;
+    }
+    return m;
+}
+
+void port_mutex_lock(port_mutex_t *m)
+{
+    xSemaphoreTake(m->sem, portMAX_DELAY);
+}
+
+void port_mutex_unlock(port_mutex_t *m)
+{
+    xSemaphoreGive(m->sem);
+}
+
+/* esp_timer: the callback runs in the esp_timer task */
+struct port_timer {
+    esp_timer_handle_t h;
+};
+
+port_timer_t *port_timer_new(port_task_fn fn, void *arg, const char *name)
+{
+    port_timer_t *t = calloc(1, sizeof(*t));
+    if (!t) return NULL;
+    const esp_timer_create_args_t args = {.callback = fn, .arg = arg, .name = name};
+    if (esp_timer_create(&args, &t->h) != ESP_OK) {
+        free(t);
+        return NULL;
+    }
+    return t;
+}
+
+bool port_timer_start_once(port_timer_t *t, int64_t us)
+{
+    esp_timer_stop(t->h);
+    return esp_timer_start_once(t->h, (uint64_t)us) == ESP_OK;
+}
+
+bool port_timer_start_periodic(port_timer_t *t, int64_t us)
+{
+    esp_timer_stop(t->h);
+    return esp_timer_start_periodic(t->h, (uint64_t)us) == ESP_OK;
+}
+
+void port_timer_stop(port_timer_t *t)
+{
+    esp_timer_stop(t->h);
+}
+
 void port_log(char level, const char *tag, const char *fmt, ...)
 {
     char line[512];
