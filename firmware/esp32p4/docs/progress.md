@@ -45,6 +45,7 @@ All merged into `main`.
 | #13 | Headset microphone | `DisplayToController` #5 true starts the controller's Opus mic stream (found by probing); UAC2 capture on iso IN 0x82 |
 | #14 | Push to talk on the Assistant button | #5 true on the press, #5 false 0.3 s after release; packets outside that are dropped |
 | #15 | Web console | CDC ACM serial port next to the gamepad in every mode; JSON lines with stats once a second; settings for mode, headphone gain, Opus complexity, mic, push to talk; static page in `console/`, deployed to GitHub Pages |
+| #16 | Firmware code and TLS buffers in PSRAM | `SPIRAM_XIP_FROM_PSRAM` (cache misses served from 200 MHz PSRAM, not 40 MHz flash) and `MBEDTLS_EXTERNAL_MEM_ALLOC`; aimed at the headphone underruns while the mic runs; board test pending |
 
 ## Things we learned the hard way
 
@@ -57,6 +58,9 @@ All merged into `main`.
   headers (its cast certificate), so the HTTPS server accepts up to 16 KB of headers.
 - **High-speed isochronous OUT.** On the P4's DWC2 controller an iso OUT endpoint with
   bInterval 4 never completed; bInterval 1 (every microframe) works.
+- **PSRAM and audio.** PSRAM is fine for big, rarely touched buffers (TLS) but not for the
+  audio path: the Opus state in PSRAM made encoding slower. Running the code itself from PSRAM
+  is different: it replaces slow 40 MHz flash as what the caches miss into.
 - **Scratchy audio** went away once frames were sent on a fixed 20 ms grid, the hotspot's DTIM
   period was set to 1, and the encoder state moved to internal RAM.
 - **Windows and 045E:028E.** Windows' xusb22 driver claims that ID for the whole composite
