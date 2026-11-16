@@ -46,12 +46,32 @@ jobs:
           version="$(date -u +%Y.%m.%d)-$(git rev-parse --short=7 HEAD)"
           echo "$version" > version.txt # the app's version string (esp_app_desc_t.version)
           echo "VERSION=$version" >> "$GITHUB_ENV"
+      # The component registry's esp_hosted 2.13.1 has dependency rules on Kconfig options that
+      # no Kconfig defines, which the component manager in the IDF 5.5.4 image refuses ("Missing
+      # required kconfig option after retry"). So the three components come from their git
+      # repositories at the versions main/idf_component.yml asks for, without the manager.
+      - name: components
+        run: |
+          v=/tmp/vend
+          git clone -q --depth 1 -b v2.13.1 --recurse-submodules --shallow-submodules https://github.com/espressif/esp-hosted-mcu.git $v/esp_hosted
+          git clone -q --depth 1 -b wifi_remote-v1.6.5 https://github.com/espressif/esp-wifi-remote.git $v/esp-wifi-remote
+          git init -q $v/esp-usb && git -C $v/esp-usb fetch -q --depth 1 https://github.com/espressif/esp-usb.git 7d9431146f9078ebe4f0ac94e9a69e88cee64deb && git -C $v/esp-usb checkout -q FETCH_HEAD # esp_tinyusb 3.0.1
+          git clone -q --depth 1 -b v0.21.0.6 https://github.com/espressif/tinyusb.git $v/esp-usb/device/esp_tinyusb/tinyusb
+          mkdir -p $v/comps
+          ln -s $v/esp_hosted $v/comps/esp_hosted
+          ln -s $v/esp-wifi-remote/components/esp_wifi_remote $v/comps/esp_wifi_remote
+          ln -s $v/esp-usb/device/esp_tinyusb $v/comps/esp_tinyusb
+          rm main/idf_component.yml
+          sed -i 's/PRIV_REQUIRES /PRIV_REQUIRES esp_hosted esp_wifi_remote /' main/CMakeLists.txt
       - name: build
+        env:
+          IDF_COMPONENT_MANAGER: "0"
         run: |
           . "$IDF_PATH/export.sh"
-          idf.py set-target esp32p4
-          idf.py build
-          idf.py merge-bin -o stadiacast-dongle-full.bin
+          x=-DEXTRA_COMPONENT_DIRS=/tmp/vend/comps
+          idf.py $x set-target esp32p4
+          idf.py $x build
+          idf.py $x merge-bin -o stadiacast-dongle-full.bin
           echo "IDF=$(idf.py --version)" >> "$GITHUB_ENV"
       - name: collect
         run: |
