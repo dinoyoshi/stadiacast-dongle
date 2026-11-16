@@ -305,9 +305,10 @@ GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Acti
   on a real Switch console, are untested.
 - The headset microphone is tested on Linux only; Windows is untested. While Assistant is held
   (the mic running) the headphones may crackle a little: their stream has 1 to 3 underruns per
-  10 s instead of about 0, as the P4 is close to its limit encoding and decoding at once. The
-  encoder now drops to complexity 4 while the mic runs (about half its CPU time at 8); whether
-  that removes the crackle is still to be tested on the board.
+  10 s instead of about 0. The encoder drops to complexity 4 while the mic runs (about half
+  its CPU time at 8). A later board test showed 3 underruns per 10 s with the mic on or off,
+  from USB packets the board missed; those are now filled in (not yet tested on the board).
+  Keep the Opus complexity at 8 or below: 10 stutters.
 - Several controllers are tested on a PC build (two fake controllers) and on the board with one
   real controller; players 2 to 4 with real controllers are untested. Pairing over the board's
   Bluetooth is tested on the board with one controller.

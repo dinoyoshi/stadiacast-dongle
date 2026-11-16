@@ -8,6 +8,13 @@
  * buffer that usb_pad_audio_read() drains. Volume (-50..0 dB) and mute are applied when the
  * samples are read.
  *
+ * A packet the host sent while no transfer was armed (the interrupt came more than a microframe
+ * late) is lost: the board saw about 0.6% of them go, 3 Opus frames short per 10 s, so the
+ * controller ran dry every few seconds. The interrupt reads the (micro)frame number the
+ * controller is on: a step of more than one since the last packet means packets were missed,
+ * and the current packet is repeated in their place (up to MISS_FILL_MAX) so the stream keeps
+ * its length. A repeated 125 us is far less audible than the controller running dry.
+ *
  * Microphone: usb_pad_mic_write() fills a ring of mono samples; the interrupt sends 48 of them
  * per 1 ms frame (6 per 125 us microframe at high speed) on isochronous IN 0x82, arming the next
  * packet as each one completes. The ring starts MIC_PRIME_MS deep and follows the host's clock,
@@ -22,6 +29,8 @@
 
 #include <math.h>
 #include <string.h>
+
+#include "soc/usb_dwc_struct.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -41,6 +50,9 @@ static const char *TAG = "usb_audio";
 #define MIC_RING 8192            /* samples, a power of two: 170 ms */
 #define MIC_PRIME_MS 40
 #define MIC_MAX_MS 120
+#define SOFFN_MASK 0x3FFF /* the DWC2 (micro)frame number, 14 bits */
+#define MISS_FILL_MAX 8    /* packets repeated for one gap; a longer gap is a pause */
+#define MISS_PAUSE 64      /* a step this long or more: the host paused, nothing is filled */
 
 enum { FU_SPK, FU_MIC };
 
@@ -61,6 +73,9 @@ static struct {
     int16_t volume[2];        /* 1/256 dB */
     volatile int32_t gain[2]; /* Q15, 0 when muted */
     volatile uint32_t overflows;
+    bool uf_valid;      /* uf_last holds the (micro)frame of the last packet */
+    uint32_t uf_last;
+    volatile uint32_t missed, filled; /* since the last report */
     volatile uint32_t packets, bytes, failed; /* since the last report */
     int64_t report_at;
     /* the microphone */
@@ -74,6 +89,7 @@ static struct {
     volatile uint32_t mic_packets, mic_underruns, mic_skips, mic_dropped, mic_written;
     int64_t mic_report_at;
     /* the same, from power-up, for the console (usb_pad_audio_stats) */
+    volatile uint32_t t_missed;
     volatile uint32_t t_packets, t_failed, t_overflows, t_mic_packets, t_mic_underruns, t_mic_skips, t_mic_dropped;
 } U;
 
@@ -217,6 +233,7 @@ static bool set_interface(uint8_t rhport, uint8_t itf, uint8_t alt)
     if (alt == 1) { /* (again) from a clean endpoint: activating drops a transfer still armed */
         if (U.alt != 1) ESP_LOGI(TAG, "the host started playing");
         U.alt = 1;
+        U.uf_valid = false;
         TU_ASSERT(usbd_edpt_iso_activate(rhport, U.ep));
         if (!usbd_edpt_xfer(rhport, USB_AUDIO_EP_OUT, s_buf.out, USB_AUDIO_EP_SIZE, false)) {
             ESP_LOGE(TAG, "could not arm the audio endpoint");
@@ -331,12 +348,27 @@ static bool uac_xfer_isr(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, 
     U.packets++;
     U.t_packets++;
     U.bytes += n;
+    /* packets the host sent while nothing was armed: the (micro)frame number stepped more than one */
+    uint32_t uf = USB_DWC_HS.dsts_reg.soffn;
+    uint32_t step = U.uf_valid ? (uf - U.uf_last) & SOFFN_MASK : 1;
+    U.uf_last = uf;
+    U.uf_valid = true;
+    uint32_t fill = 0;
+    if (step > 1 && step < MISS_PAUSE) {
+        U.missed += step - 1;
+        U.t_missed += step - 1;
+        fill = step - 1 > MISS_FILL_MAX ? MISS_FILL_MAX : step - 1;
+    }
     if (result == XFER_RESULT_SUCCESS && n && U.alt == 1) {
-        if (xStreamBufferSpacesAvailable(U.ring) >= n) {
-            xStreamBufferSendFromISR(U.ring, s_buf.out, n, &woken);
-        } else {
-            U.overflows++;
-            U.t_overflows++;
+        for (uint32_t i = 0; i <= fill; i++) { /* the repeats, then the packet itself */
+            if (xStreamBufferSpacesAvailable(U.ring) >= n) {
+                xStreamBufferSendFromISR(U.ring, s_buf.out, n, &woken);
+                if (i < fill) U.filled++;
+            } else {
+                U.overflows++;
+                U.t_overflows++;
+                break;
+            }
         }
     }
     if (U.alt == 1) usbd_edpt_xfer(rhport, USB_AUDIO_EP_OUT, s_buf.out, USB_AUDIO_EP_SIZE, true);
@@ -372,11 +404,12 @@ size_t usb_pad_audio_read(int16_t *pcm, size_t max_frames, uint32_t timeout_ms)
     size_t n = xStreamBufferReceive(U.ring, pcm, max_frames * 4, pdMS_TO_TICKS(timeout_ms)) / 4;
     int64_t now = esp_timer_get_time();
     if (now - U.report_at >= 10000000) { /* what the endpoint did in the last 10 s, while playing */
-        uint32_t packets = U.packets, bytes = U.bytes, failed = U.failed;
-        U.packets = U.bytes = U.failed = 0;
+        uint32_t packets = U.packets, bytes = U.bytes, failed = U.failed, missed = U.missed, filled = U.filled;
+        U.packets = U.bytes = U.failed = U.missed = U.filled = 0;
         if (U.alt == 1 || packets) {
-            ESP_LOGI(TAG, "%u packets (%u B, %u failed) in %d s, %u did not fit", (unsigned)packets, (unsigned)bytes,
-                     (unsigned)failed, (int)((now - U.report_at) / 1000000), (unsigned)U.overflows);
+            ESP_LOGI(TAG, "%u packets (%u B, %u failed) in %d s, %u did not fit, %u missed (%u filled in)",
+                     (unsigned)packets, (unsigned)bytes, (unsigned)failed, (int)((now - U.report_at) / 1000000),
+                     (unsigned)U.overflows, (unsigned)missed, (unsigned)filled);
         }
         U.report_at = now;
     }
@@ -427,6 +460,7 @@ void usb_pad_audio_stats(usb_pad_audio_stats_t *st)
         .packets = U.t_packets,
         .failed = U.t_failed,
         .overflows = U.t_overflows,
+        .missed = U.t_missed,
         .mic_packets = U.t_mic_packets,
         .mic_underruns = U.t_mic_underruns,
         .mic_skips = U.t_mic_skips,

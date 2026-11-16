@@ -98,6 +98,8 @@ typedef struct {
     int16_t volume[2];             /* 1/256 dB */
     uint32_t packets, failed;      /* headphone packets from the host */
     uint32_t overflows;            /* headphone packets that did not fit (the encoder fell behind) */
+    uint32_t missed;               /* headphone packets lost (the endpoint was not armed in time);
+                                    * each is filled in with a repeat of the next one */
     uint32_t mic_packets, mic_underruns, mic_skips, mic_dropped;
     uint32_t mic_buffered;         /* samples waiting for the host */
 } usb_pad_audio_stats_t;
