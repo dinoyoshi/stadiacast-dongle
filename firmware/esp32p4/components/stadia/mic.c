@@ -213,9 +213,10 @@ static void stats(void)
 static void mic_task(void *arg)
 {
     /* On the heap, not in .bss: on v1.x P4 chips .bss comes out of the small RAM pool the system
-     * starts from, and these 13 KB there stopped the board booting (see c6_update.c). */
-    pkt_t *pp = malloc(sizeof(pkt_t));
-    int16_t *pcm = malloc(MAX_FRAME * sizeof(int16_t));
+     * starts from, and these 13 KB there stopped the board booting (see c6_update.c). PSRAM:
+     * the decoder's state stays in internal RAM, these only carry a packet and a frame. */
+    pkt_t *pp = port_alloc_bulk(sizeof(pkt_t));
+    int16_t *pcm = port_alloc_bulk(MAX_FRAME * sizeof(int16_t));
     if (!pp || !pcm) {
         SLOGE(TAG, "no memory for the microphone decoder");
         free(pp);
@@ -287,7 +288,7 @@ bool mic_talking(void)
 bool mic_init(void)
 {
     M.last_seq = -1;
-    M.q = calloc(QUEUE_LEN, sizeof(pkt_t));
+    M.q = port_alloc_bulk(QUEUE_LEN * sizeof(pkt_t)); /* 12 KB of packets: PSRAM */
     M.ev = port_event_new();
     if (!M.q || !M.ev) {
         SLOGE(TAG, "no memory for the microphone queue");

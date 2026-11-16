@@ -79,6 +79,11 @@ void *port_alloc_fast(size_t n)
     return malloc(n);
 }
 
+void *port_alloc_bulk(size_t n)
+{
+    return calloc(1, n);
+}
+
 void port_sleep_ms(int ms)
 {
     struct timespec ts = {ms / 1000, (ms % 1000) * 1000000L};

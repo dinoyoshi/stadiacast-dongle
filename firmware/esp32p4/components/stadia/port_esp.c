@@ -75,6 +75,12 @@ void *port_alloc_fast(size_t n)
     return heap_caps_malloc(n, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 
+void *port_alloc_bulk(size_t n)
+{
+    void *p = heap_caps_calloc(1, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return p ? p : calloc(1, n);
+}
+
 void port_sleep_ms(int ms)
 {
     vTaskDelay(pdMS_TO_TICKS(ms) ? pdMS_TO_TICKS(ms) : 1);

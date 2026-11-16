@@ -45,6 +45,7 @@ All merged into `main`.
 | #13 | Headset microphone | `DisplayToController` #5 true starts the controller's Opus mic stream (found by probing); UAC2 capture on iso IN 0x82 |
 | #14 | Push to talk on the Assistant button | #5 true on the press, #5 false 0.3 s after release; packets outside that are dropped |
 | #15 | Web console | CDC ACM serial port next to the gamepad in every mode; JSON lines with stats once a second; settings for mode, headphone gain, Opus complexity, mic, push to talk; static page in `console/`, deployed to GitHub Pages |
+| #16 | TLS and audio buffers in PSRAM, faster flash | `MBEDTLS_EXTERNAL_MEM_ALLOC` (boots and reaches ready on the board); audio rings and queues (about 55 KB) in PSRAM via `port_alloc_bulk()`, Opus state and audio stacks stay internal; flash at QIO 80 MHz instead of DIO 40 MHz (80 MHz needs minimum chip rev v1.0; boots on the board), aimed at the headphone underruns while the mic runs (board test pending). Running code from PSRAM (`SPIRAM_XIP_FROM_PSRAM`) was tried and dropped: it boot-loops a v1.3 P4 |
 
 ## Things we learned the hard way
 
@@ -57,6 +58,11 @@ All merged into `main`.
   headers (its cast certificate), so the HTTPS server accepts up to 16 KB of headers.
 - **High-speed isochronous OUT.** On the P4's DWC2 controller an iso OUT endpoint with
   bInterval 4 never completed; bInterval 1 (every microframe) works.
+- **PSRAM and audio.** PSRAM is fine for TLS buffers and the audio rings and queues (plain
+  copies, and the TinyUSB interrupt is not IRAM so it never runs with the cache off), but not for
+  the Opus state or the audio task stacks: Opus in PSRAM made encoding slower. Running the code itself from PSRAM
+  (`SPIRAM_XIP_FROM_PSRAM`) boot-loops a v1.3 P4: it adds about 12 KB of internal RAM use and the
+  idle task's stack allocation fails before the scheduler starts (the startup RAM issue above).
 - **Scratchy audio** went away once frames were sent on a fixed 20 ms grid, the hotspot's DTIM
   period was set to 1, and the encoder state moved to internal RAM.
 - **Windows and 045E:028E.** Windows' xusb22 driver claims that ID for the whole composite

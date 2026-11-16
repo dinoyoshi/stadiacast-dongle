@@ -26,6 +26,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/stream_buffer.h"
 #include "esp_heap_caps.h"
 
@@ -84,9 +85,12 @@ static void update_gain(int fu)
 bool usb_audio_init(void)
 {
     /* From the heap, not .bss: on v1.x P4 chips .bss eats into the small RAM pool the system
-     * starts from (see c6_update.c). Internal RAM, as the USB ISR writes it. */
-    U.ring = xStreamBufferCreate(RING_BYTES, 480 * 4); /* wake the reader per 10 ms */
-    U.mic_ring = heap_caps_calloc(MIC_RING, sizeof(int16_t), MALLOC_CAP_INTERNAL);
+     * starts from (see c6_update.c). PSRAM, internal RAM if there is none: the USB ISR touches
+     * both, but it is not an IRAM one, so it never runs while the flash cache is off. */
+    U.ring = xStreamBufferCreateWithCaps(RING_BYTES, 480 * 4, MALLOC_CAP_SPIRAM); /* wake per 10 ms */
+    if (!U.ring) U.ring = xStreamBufferCreate(RING_BYTES, 480 * 4);
+    U.mic_ring = heap_caps_calloc(MIC_RING, sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    if (!U.mic_ring) U.mic_ring = heap_caps_calloc(MIC_RING, sizeof(int16_t), MALLOC_CAP_INTERNAL);
     U.volume[FU_SPK] = U.volume[FU_MIC] = 0;
     update_gain(FU_SPK);
     update_gain(FU_MIC);

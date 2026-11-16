@@ -3,8 +3,13 @@ CONFIG_IDF_TARGET="esp32p4"
 # FireBeetle 2 boards ship with early P4 silicon (v1.x); builds for v3.x chips do not boot on them.
 # A board with a v3 chip needs these two lines removed.
 CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
-CONFIG_ESP32P4_REV_MIN_0=y
+# Minimum rev v1.0 (not v0.0): IDF only offers 80 MHz flash above v0.0. v0.x were engineering samples.
+CONFIG_ESP32P4_REV_MIN_100=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# Code runs from flash through the caches: quad I/O at 80 MHz instead of the default dual I/O at
+# 40 MHz makes each cache miss (Opus, while the mic decodes on the other core) about 4x faster.
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_SPIRAM=y
@@ -36,3 +41,6 @@ CONFIG_FREERTOS_HZ=1000
 # Step 2b: DTLS-SRTP display link
 CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
 CONFIG_MBEDTLS_SSL_DTLS_SRTP=y
+# TLS/DTLS buffers in PSRAM: they are only busy during connection setup, and internal RAM is
+# the scarce one (USB, SDIO, task stacks, the audio path).
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
