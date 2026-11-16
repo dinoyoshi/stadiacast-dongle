@@ -1,0 +1,89 @@
+name: Tested on my setup
+description: Tell us how something worked on your board, computer or console, especially anything marked ⚪ (untested) in the README.
+title: "Tested: "
+labels: [tested-on]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Reports that something **works** are as useful as bug reports: they fill in the README's [Tested on](https://github.com/dinoyoshi/stadiacast-dongle#tested-on) table. If it didn't work, a [bug report](https://github.com/dinoyoshi/stadiacast-dongle/issues/new?template=bug_report.yml) gets you help faster.
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Works
+        - Works, with some rough edges (say which below)
+        - Doesn't work
+    validations:
+      required: true
+  - type: checkboxes
+    id: what
+    attributes:
+      label: What you tried
+      options:
+        - label: Buttons, sticks and triggers
+        - label: Rumble
+        - label: Headset audio
+        - label: Headset microphone
+        - label: Web console (live stats, settings)
+        - label: Firmware update from the console
+        - label: Pairing a controller from the console
+        - label: Two or more real controllers at once
+        - label: Opus bitrate by ear
+        - label: Something else (say what below)
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: What the dongle was plugged into
+      multiple: true
+      options:
+        - Linux
+        - Windows
+        - macOS
+        - SteamOS / Steam Deck
+        - Nintendo Switch
+        - Android
+        - Other (say which below)
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: System version, game or app
+      placeholder: Windows 11 24H2, Discord; or Switch 19.0, Mario Kart 8
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Controller mode
+      multiple: true
+      options:
+        - Xbox 360 (Stadia + A)
+        - DualShock 4 (Stadia + B)
+        - Switch Pro (Stadia + X)
+        - HID gamepad (Stadia + Y)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Firmware version
+      description: From the web console's Update firmware card.
+    validations:
+      required: true
+  - type: input
+    id: board
+    attributes:
+      label: Board
+      value: DFRobot FireBeetle 2 ESP32-P4
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: How it went
+      description: What you did and what you noticed. Numbers from the console (underruns, round trip, input lost) are a bonus.
+    validations:
+      required: true

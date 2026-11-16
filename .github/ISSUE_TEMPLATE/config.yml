@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting
+    url: https://github.com/dinoyoshi/stadiacast-dongle/blob/main/firmware/esp32p4/docs/troubleshooting.md
+    about: The wrong USB port, the controller not joining, serial ports on Linux, no sound on Windows.
+  - name: User guide (FireBeetle 2 ESP32-P4)
+    url: https://github.com/dinoyoshi/stadiacast-dongle/blob/main/firmware/esp32p4/README.md
+    about: Flashing, pairing, modes, button mapping, headset setup and the web console.

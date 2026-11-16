@@ -39,6 +39,10 @@ tested with `ota.282115`). See [Known limits](#known-limits) for what is rough.
   other one (serial / programming) is only for flashing and the log.
 - Nothing else: the status LED (GPIO3) and the BOOT button (GPIO35) are on the board.
 
+<!-- PHOTO: board top view with both USB-C ports, the LED and the BOOT button labelled.
+     See docs/img/README.md for the shot list. When docs/img/ports.jpg exists, replace this
+     comment with: ![The FireBeetle 2 ESP32-P4: OTG port (the dongle) and programming port](docs/img/ports.jpg) -->
+
 **Chip revision.** FireBeetle boards ship with early P4 silicon (v1.x; ours is v1.3), and an
 ESP-IDF build made for v3.x chips does not boot on them. `sdkconfig.defaults` already selects
 `CONFIG_ESP32P4_SELECTS_REV_LESS_V3`. On a board with a v3 chip, remove the two `REV` lines
@@ -66,7 +70,9 @@ apply.
 console, [stadiacast-dongle-full.bin](https://dinoyoshi.github.io/stadiacast-dongle/firmware/stadiacast-dongle-full.bin)
 (or one you made with `idf.py merge-bin`), at offset 0 over the programming port:
 `esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle-full.bin`, or in the browser with
-[ESP Web Tool](https://espressif.github.io/esptool-js/) (address 0x0, Chrome or Edge). After
+[ESP Web Tool](https://espressif.github.io/esptool-js/) (address 0x0, Chrome or Edge). Each
+[release](https://github.com/dinoyoshi/stadiacast-dongle/releases) has the same two files for a
+tagged version, with their checksums. After
 that, update from the web console (below), with no tools and over the dongle's own cable.
 
 **Coming from a firmware before web console updates** (the flash layout with one `factory`
@@ -297,6 +303,8 @@ GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Acti
 `main` (pull requests only build it).
 
 ## Known limits
+
+When something doesn't work, start with [Troubleshooting](docs/troubleshooting.md).
 
 - Some loud songs clip a little in the headset. Lowering the headphone gain in the web console
   a few dB is the likely fix; not yet tried.
