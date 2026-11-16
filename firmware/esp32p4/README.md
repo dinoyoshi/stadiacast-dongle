@@ -75,7 +75,7 @@ offset 0: `esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle.bin`, or in 
 | status LED GPIO (-1: none) | 3 |
 | USB serial console for the web console | on |
 
-The headphone gain, Opus complexity and bitrate, microphone and push to talk can also be changed at run time
+The headphone gain, Opus complexity and bitrate, microphone, push to talk and rumble can also be changed at run time
 from the web console (below); what it sets is saved on the board and wins over menuconfig.
 
 ## First-time controller setup
@@ -169,6 +169,9 @@ into the computer, open the console in Chrome or Edge (desktop) and press **Conn
   controller's input, and the firmware's log.
 - Settings: gamepad mode, headphone gain (-12 to 0 dB before the Opus encoder), Opus complexity,
   Opus bitrate (32 to 160 kbps), microphone (after a restart), push to talk; restart and reset buttons.
+- Rumble: on/off and a strength per motor (0 to 200%; 100% is what the game asks for, more lifts
+  weak rumble), the levels the motors get right now, and test buttons (left, right, both,
+  gentle, stop) that run the motors for a second through those settings.
 
 The dongle carries a USB serial port for it in every mode (`/dev/ttyACM*` on Linux, a COM port
 on Windows, no driver needed). The page uses Web Serial, which Firefox and Safari don't have. On
@@ -177,7 +180,8 @@ dongle comes back as another USB device: the browser reconnects by itself once e
 been picked in the Connect dialog once.
 
 The same port works from a terminal (`screen /dev/ttyACM0`): type `hello`, `get`,
-`set gain -3`, `set complexity 5`, `set bitrate 64`, `set mode 1`, `logs on`, `reboot`. The protocol is described
+`set gain -3`, `set complexity 5`, `set bitrate 64`, `set mode 1`, `set rumble 0`,
+`set rumble_left 150`, `rumble 255 255 1000` (a 1 s test, levels 0-255 per motor), `logs on`, `reboot`. The protocol is described
 at the top of `main/console.c`.
 
 GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Actions". The
