@@ -13,6 +13,9 @@
  *     "Stadiacast Dongle" headphones goes to the controller's headset jack
  *   - "media from the controller" and "microphone stream": the controller sends its microphone,
  *     which the computer records from the same headset's microphone
+ * With several players (the console's "players" setting), each controller gets a player number
+ * ("player 2 is controller ...", lines tagged display2 and game2) and its own USB gamepad in the
+ * Xbox 360 and HID modes; the headset audio and the microphone stay with player 1.
  * The USB gamepad (an Xbox 360 controller to the host) and the USB headphones are on the
  * board's high-speed USB-C port; the other USB-C port stays the serial console and programming
  * port.
@@ -36,27 +39,35 @@ static const char *TAG = "dongle";
  * controller's layout; the Stadia button is the guide button, Assistant and Capture go in extra. */
 #define XINPUT_SHARED_BITS 0xF3FF
 
-static void on_pad(const stadia_pad_t *pad, void *arg)
+/* Which players' controllers are connected, for the LED: steady while any is. */
+static volatile uint32_t s_connected;
+
+static void on_pad(int player, const stadia_pad_t *pad, void *arg)
 {
     usb_pad_state_t st = {0}; /* a disconnect releases everything */
-    status_led_set(pad->connected ? LED_CONNECTED : LED_WAITING);
+    if (pad->connected) {
+        s_connected |= 1u << player;
+    } else {
+        s_connected &= ~(1u << player);
+    }
+    status_led_set(s_connected ? LED_CONNECTED : LED_WAITING);
     if (pad->connected) {
         st.buttons = (pad->buttons & XINPUT_SHARED_BITS) | ((pad->buttons & STADIA_BTN_STADIA) ? USB_PAD_GUIDE : 0);
         st.extra = (pad->buttons & STADIA_BTN_CAPTURE ? USB_PAD_CAPTURE : 0) |
                    (pad->buttons & STADIA_BTN_ASSISTANT ? USB_PAD_ASSISTANT : 0);
         st.lt = pad->lt, st.rt = pad->rt;
         st.lx = pad->lx, st.ly = pad->ly, st.rx = pad->rx, st.ry = pad->ry;
-        pad_mode_filter(&st);
+        if (player == 0) pad_mode_filter(&st); /* the mode combos are player 1's */
     }
-    usb_pad_send(&st);
-    console_pad(&st);
+    usb_pad_send(player, &st);
+    console_pad(player, &st);
 }
 
-/* The game's rumble (0..255 per motor) to the controller's motors, through the console's
- * rumble settings (rumble.c). */
-static void on_rumble(uint8_t large, uint8_t small, void *arg)
+/* The game's rumble (0..255 per motor) for a player's gamepad to that controller's motors,
+ * through the console's rumble settings (rumble.c). */
+static void on_rumble(int player, uint8_t large, uint8_t small, void *arg)
 {
-    rumble_host(large, small);
+    rumble_host(player, large, small);
 }
 
 #if CONFIG_DONGLE_USB_AUDIO
@@ -105,13 +116,16 @@ void app_main(void)
     dongle_settings_t set;
     rumble_init();
     settings_load(&set);
+    const char *known[STADIA_MAX_CONTROLLERS];
+    int players = players_load(known);
 #if CONFIG_DONGLE_CONSOLE
     usb_pad_enable_console();
 #endif
-    if (usb_pad_start(pad_mode_load(), on_rumble, NULL, audio) != ESP_OK) {
+    if (usb_pad_start(pad_mode_load(), players, on_rumble, NULL, audio) != ESP_OK) {
         ESP_LOGE(TAG, "no USB gamepad, see above");
     }
     stadia_set_pad_callback(on_pad, NULL);
+    stadia_set_controller_callback(players_on_controller, NULL);
 #if CONFIG_DONGLE_USB_MIC
     stadia_set_mic_callback(on_mic, NULL);
 #endif
@@ -137,7 +151,9 @@ void app_main(void)
         .audio_kbps = set.kbps,
         .mic = audio && set.mic,
         .mic_push_to_talk = set.ptt, /* the console's settings, CONFIG_DONGLE_* until it changes them */
+        .max_controllers = (uint8_t)players,
     };
+    for (int i = 0; i < STADIA_MAX_CONTROLLERS; i++) cfg.known_ids[i] = known[i];
     bool servers = stadia_start(&cfg);
     if (!servers) {
         ESP_LOGE(TAG, "a server did not start, see above");
@@ -149,9 +165,10 @@ void app_main(void)
     }
 #endif
 #if CONFIG_DONGLE_CONSOLE
-    console_start(cfg.mic);
+    console_start(cfg.mic, players);
 #endif
     ota_confirm_when_up(servers);
     status_led_set(LED_WAITING);
-    ESP_LOGI(TAG, "ready: wake the controller (about 1 s press of the Stadia button)");
+    ESP_LOGI(TAG, "ready for %d controller%s: wake the controller (about 1 s press of the Stadia button)", players,
+             players > 1 ? "s" : "");
 }

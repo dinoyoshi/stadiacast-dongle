@@ -11,6 +11,8 @@
 #define STADIA_VERSION "1.2.0-esp32p4"
 
 extern stadia_config_t g_cfg;
+/* How many controllers this start serves (g_cfg.max_controllers): slots 0 .. g_nctl - 1. */
+extern int g_nctl;
 
 /* ---- HTTP (https.c) ---------------------------------------------------------------- */
 
@@ -72,9 +74,10 @@ size_t signaling_build_answer(const offer_echo_t *echo, const char *ufrag, const
 /* Our RtcIceCandidate: advertise_ip and `port`. */
 size_t signaling_build_candidate(uint16_t port, uint8_t *out, size_t cap);
 
-/* Parse a WebRtcSdpAndIceCandidates offer bundle and build our answer bundle into `out`.
- * Returns the answer's length, 0 on failure. */
-size_t signaling_answer(const uint8_t *offer_bundle, size_t len, remote_offer_t *remote, uint8_t *out, size_t out_cap);
+/* Parse a WebRtcSdpAndIceCandidates offer bundle and build our answer bundle into `out`, with
+ * our candidate on `port`. Returns the answer's length, 0 on failure. */
+size_t signaling_answer(const uint8_t *offer_bundle, size_t len, remote_offer_t *remote, uint16_t port, uint8_t *out,
+                        size_t out_cap);
 
 /* ---- our DTLS identity and ICE credentials (rtc_identity.c) ------------------------ */
 
@@ -96,9 +99,15 @@ void rtc_ice_string(char *out, size_t n);
 
 /* ---- the display link and the game session on UDP (rtc.c, game.c) ------------------ */
 
-bool rtc_start(uint16_t display_port, uint16_t game_port);
-/* A new offer on the display link: reset it and start ICE towards its candidates. */
-void rtc_set_remote(const remote_offer_t *remote);
+/* Every slot's two links (g_cfg's ports + 2 * slot) and the task that runs them. */
+bool rtc_start(void);
+uint16_t rtc_display_port(int slot);
+/* A new offer on a slot's display link: reset it and start ICE towards its candidates. */
+void rtc_set_remote(int slot, const remote_offer_t *remote);
+/* The slot went to another controller or was forgotten: close both its links. Any task. */
+void rtc_forget(int slot);
+/* The links' part of stadia_get_players(). */
+void rtc_player_info(int slot, stadia_player_t *p);
 
 /* ---- small UDP servers ------------------------------------------------------------- */
 

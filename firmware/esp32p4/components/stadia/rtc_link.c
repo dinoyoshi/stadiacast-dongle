@@ -587,10 +587,17 @@ bool rpc_decode(const uint8_t *data, size_t len, rpc_msg_t *m)
 static void take_remote(rtc_link_t *L)
 {
     port_lock();
-    bool fresh = L->remote_new;
+    bool fresh = L->remote_new, close = L->close_new;
     if (fresh) L->remote = L->pending;
-    L->remote_new = false;
+    L->remote_new = L->close_new = false;
     port_unlock();
+    if (close && !fresh) {
+        dtls_reset(L);
+        L->selected = L->verified_out = L->have_remote = false;
+        L->ncand = 0;
+        SLOGI(TAG, "%s: closed", L->name);
+        return;
+    }
     if (!fresh) return;
     dtls_reset(L);
     L->selected = L->verified_out = false;
@@ -720,6 +727,14 @@ void rtc_link_set_credentials(rtc_link_t *L, const char *ufrag, const char *pwd)
     port_unlock();
 }
 
+void rtc_link_close(rtc_link_t *L)
+{
+    port_lock();
+    L->remote_new = false;
+    L->close_new = true;
+    port_unlock();
+}
+
 void rtc_link_set_remote(rtc_link_t *L, const remote_offer_t *remote)
 {
     port_lock();
@@ -747,10 +762,11 @@ bool rtc_link_global_init(void)
     return true;
 }
 
-bool rtc_link_init(rtc_link_t *L, const char *name, uint16_t port, const rtc_link_ops_t *ops)
+bool rtc_link_init(rtc_link_t *L, const char *name, int slot, uint16_t port, const rtc_link_ops_t *ops)
 {
     memset(L, 0, sizeof(*L));
     L->name = name;
+    L->slot = slot;
     L->ops = ops;
     L->port = port;
     L->ping_us = -1;

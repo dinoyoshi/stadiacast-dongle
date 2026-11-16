@@ -67,9 +67,9 @@ static void switch_task(void *arg)
     if (usb_pad_set_mode(mode) == ESP_OK) save(mode);
     status_led_flash((int)usb_pad_mode() + 1);
     for (int i = 0; i <= (int)usb_pad_mode(); i++) {
-        stadia_rumble(40000, 40000);
+        stadia_rumble(0, 40000, 40000);
         vTaskDelay(pdMS_TO_TICKS(200));
-        stadia_rumble(0, 0);
+        stadia_rumble(0, 0, 0);
         vTaskDelay(pdMS_TO_TICKS(250));
     }
     M.busy = false;

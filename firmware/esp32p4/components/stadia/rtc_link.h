@@ -39,6 +39,7 @@ typedef struct {
 
 struct rtc_link {
     const char *name;
+    int slot; /* the player whose link this is */
     const rtc_link_ops_t *ops;
     int sock;
     uint16_t port;
@@ -46,6 +47,7 @@ struct rtc_link {
     char pwd[25];
     /* remote description, set by rtc_link_set_remote() from another task */
     bool remote_new;
+    bool close_new; /* rtc_link_close() asked for */
     remote_offer_t pending;
     remote_offer_t remote;
     /* ICE */
@@ -90,11 +92,13 @@ struct rtc_link {
 /* Shared once per boot: the DTLS certificate and key of rtc_identity(). */
 bool rtc_link_global_init(void);
 
-bool rtc_link_init(rtc_link_t *L, const char *name, uint16_t port, const rtc_link_ops_t *ops);
+bool rtc_link_init(rtc_link_t *L, const char *name, int slot, uint16_t port, const rtc_link_ops_t *ops);
 /* Our ICE credentials for the next session (the display link keeps rtc_identity()'s). */
 void rtc_link_set_credentials(rtc_link_t *L, const char *ufrag, const char *pwd);
 /* A new offer: reset the link and start ICE towards its candidates (thread-safe). */
 void rtc_link_set_remote(rtc_link_t *L, const remote_offer_t *remote);
+/* Close the link and forget its remote description (thread-safe; done by the next poll or tick). */
+void rtc_link_close(rtc_link_t *L);
 /* Called by the task: apply a pending remote description, then one datagram (or none). */
 void rtc_link_poll(rtc_link_t *L, const uint8_t *buf, size_t n, const struct sockaddr_in *from);
 void rtc_link_tick(rtc_link_t *L);

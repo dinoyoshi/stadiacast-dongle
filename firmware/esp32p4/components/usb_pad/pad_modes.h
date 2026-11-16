@@ -21,6 +21,7 @@ typedef struct {
     uint8_t interval_fs, interval_hs; /* both endpoints */
     bool stream;   /* the input report goes out every interval, not only on a change */
     bool audio_ok; /* the USB headphones may sit next to it */
+    bool multi;    /* several gamepads of this kind can share the device (one interface each) */
 } pad_mode_info_t;
 
 const pad_mode_info_t *pad_mode_info(usb_pad_mode_t mode);

@@ -7,6 +7,10 @@
  *   Switch Pro  a Nintendo Switch Pro Controller over USB: the Switch, Steam, Linux
  *   HID         a plain HID gamepad: macOS, Android, older DirectInput PC games
  * The mode can change at run time: the board leaves the bus and comes back as the new device.
+ *
+ * Several players: in the Xbox 360 and HID modes the board can be up to USB_PAD_MAX_PLAYERS
+ * gamepads at once (one interface each, player 1 first), one per Stadia controller. The
+ * DualShock 4 and Switch Pro modes are one gamepad (hosts know those by their USB ID).
  */
 #pragma once
 
@@ -51,22 +55,31 @@ typedef struct {
     int16_t lx, ly, rx, ry; /* Y positive = up */
 } usb_pad_state_t;
 
-/* The host's rumble levels, 0..255 (large = left motor, small = right). Called from the USB task. */
-typedef void (*usb_pad_rumble_cb_t)(uint8_t large, uint8_t small, void *arg);
+#define USB_PAD_MAX_PLAYERS 4
+
+/* The host's rumble levels for one player's gamepad (0 = player 1), 0..255 (large = left motor,
+ * small = right). Called from the USB task. */
+typedef void (*usb_pad_rumble_cb_t)(int player, uint8_t large, uint8_t small, void *arg);
 
 /* audio: also be a USB headset (UAC2: 48 kHz 16-bit stereo headphones and a mono microphone, each
  * with the host's volume and mute), a composite device next to the gamepad;
  * usb_pad_audio_read() returns what the host plays, usb_pad_mic_write() feeds the microphone.
  * The Switch Pro mode is the gamepad alone. */
-esp_err_t usb_pad_start(usb_pad_mode_t mode, usb_pad_rumble_cb_t rumble_cb, void *arg, bool audio);
+esp_err_t usb_pad_start(usb_pad_mode_t mode, int players, usb_pad_rumble_cb_t rumble_cb, void *arg, bool audio);
+/* How many gamepads the board is in its current mode: the players asked for in the Xbox 360 and
+ * HID modes, else 1. */
+int usb_pad_players(void);
+/* Whether a mode can be several gamepads. */
+bool usb_pad_mode_multi(usb_pad_mode_t mode);
 /* Before usb_pad_start(): also be a USB serial port, the console (usb_pad_console_*). */
 void usb_pad_enable_console(void);
 /* Leave the bus and come back in another mode. Not from the USB task. */
 esp_err_t usb_pad_set_mode(usb_pad_mode_t mode);
 usb_pad_mode_t usb_pad_mode(void);
 const char *usb_pad_mode_name(usb_pad_mode_t mode);
-/* Queue a report; sent now if the IN endpoint is free, else as soon as it is. Thread-safe. */
-void usb_pad_send(const usb_pad_state_t *state);
+/* Queue a player's report; sent now if its IN endpoint is free, else as soon as it is. A player
+ * the current mode has no gamepad for is dropped. Thread-safe. */
+void usb_pad_send(int player, const usb_pad_state_t *state);
 bool usb_pad_mounted(void);
 /* Up to max_frames interleaved stereo frames the host played (volume applied), waiting up to
  * timeout_ms for the first. 0 while the host plays nothing. */
