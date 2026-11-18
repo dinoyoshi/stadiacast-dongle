@@ -22,6 +22,7 @@ is in [docs/progress.md](docs/progress.md).
 | Runs from the OTG USB-C port alone, LED shows its state | tested on the board |
 | Updates the C6's ESP-Hosted firmware from the P4 | done once: 2.12.11 to 2.13.1 |
 | Headset microphone: the headset on the controller is the PC's USB microphone, push to talk on the Assistant button | tested on Linux (PipeWire) |
+| Built-in microphone: with no headset, the controller's own (Assistant) mic, with its own gain (+12 dB by default) | heard on Linux; gain board test pending |
 | Web console in the browser over the dongle's USB cable: live stats, settings, rumble test | tested on the board (Linux) |
 | Controller battery and connection quality in the web console | battery tested on the board |
 | Firmware updates from the web console, with rollback | tested on the board |
@@ -92,11 +93,12 @@ and the C6 firmware stay where they are. Delete an old `sdkconfig` first so the 
 | Opus encoder complexity | 8 |
 | Opus encoder complexity while the microphone runs (when lower) | 4 |
 | Opus bitrate (kbit/s, 32-160) | 96 |
+| microphone gain with a headset / built-in mic (dB, -12 to +30) | 0 / +12 |
 | controller mode at the first power-up | Xbox 360 |
 | status LED GPIO (-1: none) | 3 |
 | USB serial console for the web console | on |
 
-The headphone gain, Opus complexity and bitrate, microphone, push to talk and rumble can also be changed at run time
+The headphone gain, Opus complexity and bitrate, microphone, its gains, push to talk and rumble can also be changed at run time
 from the web console (below); what it sets is saved on the board and wins over menuconfig.
 
 ## First-time controller setup
@@ -154,8 +156,10 @@ controller has to be set up for the dongle's hotspot (above).
 - In Xbox 360 and HID modes the PC sees one gamepad per player (player 1 first), each with its
   own rumble. DualShock 4 and Switch Pro modes stay one gamepad, player 1's: the others connect
   but their input goes nowhere.
-- Headset audio and the microphone are player 1's. The mode combos (Stadia + A/B/X/Y) work on
-  player 1's controller.
+- Every player's headset plays the computer's sound (the same sound for all: one encoder is
+  what the P4 has CPU for), and every player's microphone is mixed into the dongle's one USB
+  microphone; push to talk works on each controller's own Assistant button. The mode combos
+  (Stadia + A/B/X/Y) work on player 1's controller.
 - The LED stays on while any controller is connected.
 - With more than one player in Xbox 360 mode the board uses the same USB ID as with the
   headphones (1209:0001), so Windows gives each gamepad its own Xbox driver.
@@ -239,10 +243,11 @@ into the computer, open the console in Chrome or Edge (desktop) and press **Conn
 - Hosted: `https://dinoyoshi.github.io/stadiacast-dongle/` (once GitHub Pages is on, see below), or
   open `console/index.html` from a checkout. Add `?demo` to look around without a dongle.
 - Live: controller session, its battery and connection quality (below), headphone frames, bitrate, underruns and encode
-  time, microphone packets and level, CPU per core, each task's CPU share (paused while the headphones play; Refresh lists them once), free memory, the
+  time, microphone packets, level and source (headset or built-in), CPU per core, each task's CPU share (paused while the headphones play; Refresh lists them once), free memory, the
   controller's input, and the firmware's log.
 - Settings: gamepad mode, headphone gain (-12 to 0 dB before the Opus encoder), Opus complexity,
-  Opus complexity while the mic is on, Opus bitrate (32 to 160 kbps), microphone (after a restart), push to talk; restart and reset buttons.
+  Opus complexity while the mic is on, Opus bitrate (32 to 160 kbps), microphone gain for a headset and for the built-in mic (-12 to +30 dB),
+  microphone (after a restart), push to talk; restart and reset buttons.
 - Controllers: each player's controller (id, address, status, battery, round trip, input
   lost), **Forget**, the number of players, and **Pair a controller** (above).
 - Rumble: on/off and a strength per motor (0 to 200%; 100% is what the game asks for, more lifts
@@ -293,7 +298,7 @@ build. The page only has the published build when it comes from GitHub Pages, no
 ### From a terminal
 
 The same port works from a terminal (`screen /dev/ttyACM0`): type `hello`, `get`,
-`set gain -3`, `set complexity 5`, `set mic_complexity 3`, `set bitrate 64`, `set mode 1`, `set rumble 0`,
+`set gain -3`, `set complexity 5`, `set mic_complexity 3`, `set bitrate 64`, `set mic_gain_builtin 18`, `set mode 1`, `set rumble 0`,
 `set rumble_left 150`, `rumble 255 255 1000` (a 1 s test, levels 0-255 per motor), `logs on`, `reboot`. The protocol is described
 at the top of `../core/dongle/console.c` (and the firmware update's at the top of `../core/dongle/ota.c`).
 
@@ -400,7 +405,12 @@ after DTLS connects, the same as the Python receiver.
   Microsoft OS 2.0 descriptor, and the headphones get the USB Audio 2.0 driver. Linux's xpad
   drives 1209 XInput pads too (kernel 5.12+).
 - **Microphone.** The same sound card has a microphone (48 kHz 16-bit mono, volume -50 to 0 dB
-  and mute), fed by the headset plugged into the controller. It is **push to talk**: hold the
+  and mute), fed by the headset plugged into the controller, or with no headset by the
+  controller's own built-in microphone (the one the Assistant uses). The controller picks which;
+  the stream is the same, so the board follows the jack (`GetControllerState` at connect, then
+  `AudioConfigurationChanged`) and applies that mic's gain: 0 dB for a headset and +12 dB for the
+  built-in mic by default, which is much quieter. Above 0 dB a peak limiter keeps loud speech
+  under -1 dBFS instead of clipping. It is **push to talk**: hold the
   Assistant button to talk. The board asks the controller for its microphone when the button
   goes down (sound arrives a frame or two later) and tells it to stop 0.3 s after it comes up,
   so the end of a word is kept; anything the controller still sends then is dropped, and the
@@ -409,7 +419,7 @@ after DTLS connects, the same as the Python receiver.
   ```
   DisplayToController #5 BoolValue(true) -> the controller sends Opus (PT 111, 20 ms, DTX)
     as SRTP on the display link's pair -> checked and decrypted (the controller's DTLS keys)
-    -> Opus decoder (mono, 48 kHz; lost frames concealed) -> 40 ms buffer -> USB IN 0x82
+    -> Opus decoder (mono, 48 kHz; lost frames concealed) -> gain and limiter -> 40 ms buffer -> USB IN 0x82
   ```
 
   Nothing documented that request: a probe build sent each display request whose use was not

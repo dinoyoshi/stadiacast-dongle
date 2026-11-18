@@ -120,6 +120,8 @@ int main(int argc, char **argv)
     stadia_set_controller_callback(on_controller, NULL);
     stadia_set_pad_callback(on_pad, NULL);
     stadia_set_mic_callback(on_mic, NULL);
+    /* the board's defaults; the fake controller has no headset in, so the built-in mic's gain */
+    stadia_mic_set_gain(0, getenv("STADIA_MIC_GAIN_BUILTIN") ? atoi(getenv("STADIA_MIC_GAIN_BUILTIN")) : 12);
     if (!stadia_start(&cfg)) {
         return 1;
     }
