@@ -104,10 +104,8 @@ Bluetooth mode has to be flashed back first, [how](firmware/esp32p4/docs/step1-b
 and Chrome or Edge on a desktop for the web console. These steps are for the FireBeetle 2
 ESP32-P4; other boards will have their own guide.
 
-1. **Flash the board once.** Download `stadiacast-dongle-firebeetle2-esp32p4-full.bin`, either from the
-   [latest release](https://github.com/dinoyoshi/stadiacast-dongle/releases/latest) (a tagged
-   version) or [the build of `main`](https://dinoyoshi.github.io/stadiacast-dongle/firmware/stadiacast-dongle-firebeetle2-esp32p4-full.bin)
-   that the console's Install latest uses, and write it at address `0x0` over the board's programming
+1. **Flash the board once.** Download `stadiacast-dongle-firebeetle2-esp32p4-full.bin` from the
+   [latest release](https://github.com/dinoyoshi/stadiacast-dongle/releases/latest) and write it at address `0x0` over the board's programming
    USB-C port, either in the browser with [ESP Web Tool](https://espressif.github.io/esptool-js/)
    or with `esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle-firebeetle2-esp32p4-full.bin`. You can also
    [build it yourself](firmware/esp32p4/README.md#build-and-flash) with ESP-IDF 5.5.
@@ -121,7 +119,8 @@ ESP32-P4; other boards will have their own guide.
 4. **Play.** From now on, plug in the dongle, wait for the LED to blink slowly, and press the
    Stadia button. The LED stays on while the controller is connected.
 
-Later updates come from the console's **Install latest** button, over the same cable.
+Later updates come from the console's **Install latest** button, over the same cable: it installs
+the latest release.
 
 The [FireBeetle user guide](firmware/esp32p4/README.md) covers all of this in more detail,
 plus the button mapping for each mode, headset setup on Linux and Windows, every setting, and

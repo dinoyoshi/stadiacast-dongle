@@ -1,11 +1,15 @@
 # The dongle's web console (firmware/esp32p4/console/) on GitHub Pages, with the firmware next to
-# it: the console's "Update firmware" card reads firmware/firmware.json and installs the app image it
-# names (firmware/stadiacast-dongle-<board>.bin) from the same site (same origin, so no CORS), and
-# firmware/stadiacast-dongle-<board>-full.bin is the whole flash for a first install over the
-# programming port. The old names (stadiacast-dongle.bin, stadiacast-dongle-full.bin) stay as
-# copies of the FireBeetle 2 ESP32-P4's files, for links made before the board was in the name.
+# it (same origin, so the console can download it: no CORS):
+#   firmware/       the latest release (not a pre-release): firmware.json and the board's .bin files.
+#                   The console's "Install latest" installs the app image firmware.json names.
+#   firmware/dev/   the build of main at the last deploy, for testing before a release
+#                   ("Install a .bin file" with firmware/dev/stadiacast-dongle-<board>.bin).
+# Before the first release with the files, firmware/ falls back to the build of main. The old
+# names (stadiacast-dongle.bin, stadiacast-dongle-full.bin) stay as copies of the FireBeetle 2
+# ESP32-P4's files in firmware/, for links made before the board was in the name.
+# It deploys on a push to main, when a release is published (release.yml also starts it once the
+# release has its files), and by hand. Pull requests only build the firmware.
 # One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
-# Pull requests only build the firmware, which checks that it compiles.
 name: Web console and firmware (GitHub Pages)
 
 on:
@@ -24,6 +28,8 @@ on:
       - firmware/platform/**
       - .github/workflows/console-pages.yml
       - .github/workflows/firmware-build.yml
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -58,11 +64,38 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: firmware
-          path: site/firmware
-      - name: the old file names
+          path: site/firmware/dev
+      - name: the latest release's firmware
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          cp site/firmware/stadiacast-dongle-firebeetle2-esp32p4.bin site/firmware/stadiacast-dongle.bin
-          cp site/firmware/stadiacast-dongle-firebeetle2-esp32p4-full.bin site/firmware/stadiacast-dongle-full.bin
+          out=site/firmware
+          # newest release first, pre-releases and drafts left out; the first one with firmware files
+          for tag in $(gh release list --exclude-pre-releases --exclude-drafts --limit 20 --json tagName -q '.[].tagName'); do
+            rm -rf rel && mkdir rel
+            gh release download "$tag" -D rel -p 'stadiacast-dongle-*.bin' -p 'firmware*.json' || continue
+            json=
+            for j in rel/firmware-firebeetle2-esp32p4.json rel/firmware.json; do
+              [ -f "$j" ] && { json=$j; break; }
+            done
+            [ -n "$json" ] || continue
+            echo "Install latest: $tag"
+            cp rel/*.bin "$out/"
+            cp "$json" "$out/firmware.json"
+            break
+          done
+          if [ ! -f "$out/firmware.json" ]; then
+            echo "::warning::no release with firmware files: Install latest gets the build of main"
+            cp "$out"/dev/* "$out/"
+          fi
+          # the old names, for older links (v1.0.0 already uses them)
+          app="$(jq -r .app.file "$out/firmware.json")"
+          full="$(jq -r .full.file "$out/firmware.json")"
+          [ "$app" = stadiacast-dongle.bin ] || cp "$out/$app" "$out/stadiacast-dongle.bin"
+          [ "$full" = stadiacast-dongle-full.bin ] || cp "$out/$full" "$out/stadiacast-dongle-full.bin"
+          ls -l "$out" "$out/dev"
+          cat "$out/firmware.json"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
