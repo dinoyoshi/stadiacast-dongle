@@ -18,5 +18,7 @@ bool mic_talking(void);
 /* The decoder has work: push to talk held, or speech (not just DTX) in the last 300 ms. The
  * headphones' encoder lowers its complexity meanwhile (audio.c). */
 bool mic_busy(void);
+/* The controller's headset jack (player 1's): the mic's gain follows it. From rtc.c. */
+void mic_set_headset(bool in);
 /* The microphone's part of stadia_get_stats(). */
 void mic_get_stats(stadia_stats_t *st);

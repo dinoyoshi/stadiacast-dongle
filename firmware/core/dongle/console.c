@@ -27,7 +27,8 @@
  *     as {"t":"pair","state":...,"msg":...} whenever it changes)
  *   keys: mode 0-3, gain -12..0 (dB before the Opus encoder), complexity 1-10,
  *   mic_complexity 1-10 (the complexity while the mic runs, when lower), bitrate 32-160 (Opus kbit/s), mic 0/1 (after a
- *   restart), ptt 0/1 (push to talk), rumble 0/1, rumble_left and rumble_right 0-200 (% strength),
+ *   restart), ptt 0/1 (push to talk), mic_gain and mic_gain_builtin -12..30 (dB: the microphone with a
+ *   headset in the controller's jack, and the controller's built-in mic), rumble 0/1, rumble_left and rumble_right 0-200 (% strength),
  *   players 1-4 (controllers at once, after a restart)
  * The stats carry "players": each player's controller (its id, address, link state, battery).
  *
@@ -89,6 +90,16 @@ static void apply_gain(int gain_db)
     K.gain_q15 = (int32_t)lroundf(32768.0f * powf(10.0f, gain_db / 20.0f));
 }
 
+static void apply_mic_gain(void)
+{
+    stadia_mic_set_gain(K.set.mic_gain_db[0], K.set.mic_gain_db[1]);
+}
+
+static bool mic_gain_ok(int db)
+{
+    return db >= STADIA_MIC_GAIN_MIN && db <= STADIA_MIC_GAIN_MAX;
+}
+
 void settings_load(const dongle_build_t *build, dongle_settings_t *out)
 {
     K.build = build;
@@ -103,12 +114,15 @@ void settings_load(const dongle_build_t *build, dongle_settings_t *out)
         s.kbps = u8;
     if (board_kv_get_u8("console", "mic", &u8)) s.mic = u8 != 0;
     if (board_kv_get_u8("console", "ptt", &u8)) s.ptt = u8 != 0;
+    if (board_kv_get_i8("console", "mgain", &i8) && mic_gain_ok(i8)) s.mic_gain_db[0] = i8;
+    if (board_kv_get_i8("console", "mgain_b", &i8) && mic_gain_ok(i8)) s.mic_gain_db[1] = i8;
     if (board_kv_get_u8("console", "rmb", &u8)) s.rumble = u8 != 0;
     if (board_kv_get_u8("console", "rmb_l", &u8) && u8 <= RUMBLE_PCT_MAX) s.rumble_pct[0] = u8;
     if (board_kv_get_u8("console", "rmb_r", &u8) && u8 <= RUMBLE_PCT_MAX) s.rumble_pct[1] = u8;
     if (!build->mic_available) s.mic = false;
     K.set = s;
     apply_gain(s.gain_db);
+    apply_mic_gain();
     apply_rumble();
     *out = s;
 }
@@ -121,6 +135,8 @@ static void settings_save(void)
     board_kv_set_u8("console", "kbps", K.set.kbps);
     board_kv_set_u8("console", "mic", K.set.mic);
     board_kv_set_u8("console", "ptt", K.set.ptt);
+    board_kv_set_i8("console", "mgain", K.set.mic_gain_db[0]);
+    board_kv_set_i8("console", "mgain_b", K.set.mic_gain_db[1]);
     board_kv_set_u8("console", "rmb", K.set.rumble);
     board_kv_set_u8("console", "rmb_l", K.set.rumble_pct[0]);
     board_kv_set_u8("console", "rmb_r", K.set.rumble_pct[1]);
@@ -156,10 +172,12 @@ static void sendf(const char *fmt, ...)
 static void send_settings(void)
 {
     sendf("{\"t\":\"settings\",\"mode\":%d,\"gain\":%d,\"complexity\":%d,\"mic_complexity\":%d,\"bitrate\":%d,\"mic\":%s,\"mic_running\":%s,\"ptt\":%s,"
+          "\"mic_gain\":%d,\"mic_gain_builtin\":%d,"
           "\"rumble\":%s,\"rumble_left\":%d,\"rumble_right\":%d,\"logs\":%s,\"players\":%d,\"players_running\":%d,"
           "\"usb_players\":%d}",
           (int)board_usb_mode(), K.set.gain_db, K.set.complexity, K.set.mic_complexity, K.set.kbps, K.set.mic ? "true" : "false",
           K.set.mic_running ? "true" : "false", stadia_mic_push_to_talk() ? "true" : "false",
+          K.set.mic_gain_db[0], K.set.mic_gain_db[1],
           K.set.rumble ? "true" : "false", K.set.rumble_pct[0], K.set.rumble_pct[1], K.logs ? "true" : "false",
           K.players, K.players_running, board_usb_players());
 }
@@ -258,7 +276,7 @@ static void send_stats(void)
           "\"audio\":{\"route\":%s,\"cplx\":%u,\"mcplx\":%u,\"cplx_now\":%u,\"kbps\":%u,\"enc\":%u,\"sent\":%u,\"lost\":%u,\"trim\":%u,\"under\":%u,"
           "\"resync\":%u,\"bytes\":%llu,\"enc_us\":%llu,\"enc_max\":%u},"
           "\"mic\":{\"pkts\":%u,\"muted\":%u,\"dec\":%u,\"lost\":%u,\"err\":%u,\"drop\":%u,\"peak\":%d,\"age\":%d,"
-          "\"talk\":%s},"
+          "\"talk\":%s,\"hs\":%d,\"gain\":%d},"
           "\"usb\":{\"mode\":%d,\"mounted\":%s,\"play\":%s,\"rec\":%s,\"vol\":[%d,%d],\"mute\":[%s,%s],\"pkts\":%u,"
           "\"fail\":%u,\"ovf\":%u,\"miss\":%u,\"mpkts\":%u,\"munder\":%u,\"mskip\":%u,\"mdrop\":%u,\"mbuf\":%u,\"cdrop\":%u}}",
           (long long)port_now_ms(), players, b->cpu[0], b->cpu[1], b->heap[0], b->heap[1], b->heap[2],
@@ -271,7 +289,7 @@ static void send_stats(void)
           (unsigned)s.audio_resyncs, (unsigned long long)s.audio_bytes, (unsigned long long)s.audio_enc_us,
           (unsigned)s.audio_enc_us_max, (unsigned)s.mic_packets, (unsigned)s.mic_muted, (unsigned)s.mic_decoded,
           (unsigned)s.mic_lost, (unsigned)s.mic_errors, (unsigned)s.mic_dropped, s.mic_peak, (int)s.mic_age_ms,
-          s.mic_talking ? "true" : "false", (int)board_usb_mode(), board_usb_mounted() ? "true" : "false",
+          s.mic_talking ? "true" : "false", s.mic_headset, s.mic_gain_db, (int)board_usb_mode(), board_usb_mounted() ? "true" : "false",
           u.playing ? "true" : "false", u.recording ? "true" : "false", u.volume[0], u.volume[1],
           u.mute[0] ? "true" : "false", u.mute[1] ? "true" : "false", (unsigned)u.packets, (unsigned)u.failed,
           (unsigned)u.overflows, (unsigned)u.missed, (unsigned)u.mic_packets, (unsigned)u.mic_underruns, (unsigned)u.mic_skips,
@@ -326,6 +344,10 @@ static void cmd_set(const char *key, const char *val)
     } else if (!strcmp(key, "ptt")) {
         K.set.ptt = v != 0;
         stadia_mic_set_push_to_talk(K.set.ptt);
+    } else if (!strcmp(key, "mic_gain") || !strcmp(key, "mic_gain_builtin")) {
+        if (!mic_gain_ok((int)v)) { reply_err("mic gain is -12..30 dB"); return; }
+        K.set.mic_gain_db[!strcmp(key, "mic_gain_builtin")] = (int8_t)v;
+        apply_mic_gain();
     } else if (!strcmp(key, "rumble")) {
         K.set.rumble = v != 0;
         apply_rumble();
@@ -411,6 +433,7 @@ static void handle(char *line)
         stadia_audio_set_mic_complexity(K.set.mic_complexity);
         stadia_audio_set_bitrate(K.set.kbps);
         stadia_mic_set_push_to_talk(K.set.ptt);
+        apply_mic_gain();
         apply_rumble();
         settings_save();
         sendf("{\"t\":\"ok\",\"key\":\"defaults\"}");

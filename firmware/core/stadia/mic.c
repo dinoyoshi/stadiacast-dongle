@@ -16,6 +16,12 @@
  * Push to talk (stadia_config_t.mic_push_to_talk): game.c reports the Assistant button through
  * mic_set_talk(), and packets are only queued while it is held, plus TALK_TAIL_MS after it is
  * let go so the last word is not cut off. rtc.c asks for the stream on the press.
+ *
+ * Gain: the same request gives the headset's mic when one is in the controller's jack and the
+ * controller's built-in mic (the Assistant's) when none is; the stream does not say which. The
+ * built-in one is much quieter, so each has its own gain (stadia_mic_set_gain), picked by what
+ * rtc.c last heard about the jack (mic_set_headset). Above 0 dB a peak limiter keeps loud speech
+ * under -1 dBFS instead of clipping it.
  */
 #include "stadia_internal.h"
 
@@ -38,6 +44,8 @@ static const char *TAG = "mic";
 #define TALK_TAIL_MS 300
 #define DTX_MAX 3 /* bytes: a DTX frame while nobody talks, cheap to decode */
 #define BUSY_MS 300
+#define LIMIT 29205.0f      /* -1 dBFS: the limiter's ceiling */
+#define LIMIT_REL 0.99979f  /* its release, per sample: about 100 ms at 48 kHz */
 
 typedef struct {
     uint16_t len;
@@ -74,7 +82,13 @@ static struct {
     int logged;
     volatile uint32_t t_decoded, t_lost, t_errors;
     volatile int t_peak;
-} M;
+    /* gain: dB for a headset and for the built-in mic, set by the console; the jack's state */
+    volatile int8_t gain_db[2]; /* [0] headset, [1] built-in */
+    volatile int8_t headset;    /* 1 in, 0 out, -1 not heard yet (the headset's gain then) */
+    int applied_db;             /* the mic task's: the gain in use, and as a factor */
+    float gain;
+    float env;                  /* the limiter's envelope */
+} M = {.headset = -1};
 
 void stadia_set_mic_callback(stadia_mic_cb_t cb, void *arg)
 {
@@ -137,8 +151,32 @@ static bool decoder_ready(void)
     return true;
 }
 
-static void deliver(const int16_t *pcm, int frames)
+/* The gain for the mic the controller is using, with the limiter when it boosts. In place. */
+static void apply_gain(int16_t *pcm, int frames)
 {
+    int db = M.gain_db[M.headset == 0];
+    if (db != M.applied_db) {
+        SLOGI(TAG, "gain %+d dB (%s)", db, M.headset == 0 ? "built-in microphone, no headset" : "headset microphone");
+        M.applied_db = db;
+        M.gain = powf(10.0f, db / 20.0f);
+        M.env = 0;
+    }
+    if (!db) return;
+    float g = M.gain, env = M.env;
+    for (int i = 0; i < frames; i++) {
+        float y = pcm[i] * g;
+        float a = fabsf(y);
+        env *= LIMIT_REL;
+        if (a > env) env = a; /* instant attack: env >= a, so the output never passes LIMIT */
+        if (env > LIMIT) y *= LIMIT / env;
+        pcm[i] = (int16_t)lrintf(y > 32767.0f ? 32767.0f : y < -32768.0f ? -32768.0f : y);
+    }
+    M.env = env;
+}
+
+static void deliver(int16_t *pcm, int frames)
+{
+    apply_gain(pcm, frames);
     for (int i = 0; i < frames; i++) {
         int v = pcm[i] < 0 ? -pcm[i] : pcm[i];
         if (v > M.peak) M.peak = v;
@@ -273,6 +311,23 @@ void stadia_mic_set_push_to_talk(bool on)
     if (was != on) SLOGI(TAG, "push to talk %s", on ? "on" : "off");
 }
 
+void stadia_mic_set_gain(int headset_db, int builtin_db)
+{
+    if (headset_db < STADIA_MIC_GAIN_MIN) headset_db = STADIA_MIC_GAIN_MIN;
+    if (headset_db > STADIA_MIC_GAIN_MAX) headset_db = STADIA_MIC_GAIN_MAX;
+    if (builtin_db < STADIA_MIC_GAIN_MIN) builtin_db = STADIA_MIC_GAIN_MIN;
+    if (builtin_db > STADIA_MIC_GAIN_MAX) builtin_db = STADIA_MIC_GAIN_MAX;
+    M.gain_db[0] = (int8_t)headset_db;
+    M.gain_db[1] = (int8_t)builtin_db;
+}
+
+void mic_set_headset(bool in)
+{
+    int8_t v = in ? 1 : 0;
+    if (M.headset != v) SLOGI(TAG, "%s", in ? "headset in: its microphone" : "no headset: the built-in microphone");
+    M.headset = v;
+}
+
 bool stadia_mic_push_to_talk(void)
 {
     port_lock();
@@ -328,6 +383,8 @@ void mic_get_stats(stadia_stats_t *st)
     st->mic_peak = M.t_peak;
     M.t_peak = 0;
     st->mic_talking = mic_talking();
+    st->mic_headset = M.headset;
+    st->mic_gain_db = M.gain_db[M.headset == 0];
     int64_t age = port_now_ms() - last;
     st->mic_age_ms = !last ? -1 : age > INT32_MAX ? INT32_MAX : (int32_t)age;
 }

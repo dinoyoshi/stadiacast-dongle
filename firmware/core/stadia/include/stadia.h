@@ -100,6 +100,13 @@ void stadia_set_mic_callback(stadia_mic_cb_t cb, void *arg);
  * tick of the rtc task. Not saved: whoever calls it keeps the setting. */
 void stadia_mic_set_push_to_talk(bool on);
 bool stadia_mic_push_to_talk(void);
+/* The microphone's gain in dB (STADIA_MIC_GAIN_MIN..MAX), one for a headset in the controller's
+ * jack and one for the controller's built-in mic (no headset): the controller sends whichever it
+ * has on the same stream, and the built-in one is much quieter. Above 0 dB a limiter keeps the
+ * peaks under -1 dBFS. Applies from the next frame; not saved. Both 0 dB until called. */
+#define STADIA_MIC_GAIN_MIN (-12)
+#define STADIA_MIC_GAIN_MAX 30
+void stadia_mic_set_gain(int headset_db, int builtin_db);
 
 /* Each player's controller, for the console's list. */
 typedef struct {
@@ -133,7 +140,9 @@ typedef struct {
     uint64_t audio_bytes, audio_enc_us; /* Opus bytes out, encoder time */
     uint32_t audio_enc_us_max;
     uint32_t mic_packets, mic_muted, mic_decoded, mic_lost, mic_errors, mic_dropped;
-    int mic_peak;           /* loudest decoded sample, 0..32767 */
+    int mic_peak;           /* loudest sample after the gain, 0..32767 */
+    int8_t mic_headset;     /* player 1's headset jack: 1 in, 0 out (the built-in mic), -1 not known */
+    int8_t mic_gain_db;     /* the gain for the mic in use */
     int32_t mic_age_ms;     /* since the last microphone packet, -1 before any */
     bool mic_talking;       /* push to talk: Assistant held (or just let go) */
     /* The controller's battery (ControllerToDisplay #10): the first reading comes a few

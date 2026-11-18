@@ -34,6 +34,8 @@ check fake.log 'motors left=[1-9][0-9]* right=[1-9]' 'rumble reached the motors'
 check fake.log 'done: [0-9]+ motor writes, 0 watchdog stops, 0 framing errors' 'rumble held through the watchdog'
 check fake.log 'audio: [1-9][0-9]{2,} frames played .* 0 sequence gaps' 'headset audio played without gaps'
 check host.log 'microphone [0-9.]+ s, 4[34][0-9] Hz' 'microphone decoded (440 Hz echo)'
+check host.log 'gain \+12 dB \(built-in microphone, no headset\)' 'built-in mic gain (no headset)'
+check host.log 'microphone [0-9.]+ s, 4[34][0-9] Hz, peak (2[0-8][0-9]{3}|29[01][0-9]{2}|2920[0-5])$' 'mic gain boosted, limited under -1 dBFS'
 check host.log 'battery=76%' 'battery reading'
 if [ $fail -ne 0 ]; then
     echo "--- fake controller (last 40 lines)"; tail -40 "$logs/fake.log"

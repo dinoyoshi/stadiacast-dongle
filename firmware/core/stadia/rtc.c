@@ -348,6 +348,7 @@ static void on_rpc(disp_t *D, const uint8_t *data, size_t len)
             pbf_t mode;
             bool in = pb_find(variant.data, variant.len, 1, &mode) && mode.v == 1;
             SLOGI(DTAG(D), "headset %s", in ? "plugged in" : "out");
+            if (D->link.slot == 0) mic_set_headset(in); /* the mic's gain follows the jack */
         } else {
             SLOGI(DTAG(D), "notification ControllerToDisplay #%u", (unsigned)variant.field);
         }
@@ -392,6 +393,7 @@ static void on_rpc(disp_t *D, const uint8_t *data, size_t len)
             if (f.field == 16) pbf_str(&f, fw, sizeof(fw));
         }
         SLOGI(DTAG(D), "controller: %s, hardware %s, firmware %s, headset %s", product, hw, fw, headset ? "in" : "out");
+        if (D->link.slot == 0) mic_set_headset(headset);
         set_state(D, DS_STATE);
     }
 }

@@ -121,6 +121,11 @@ The console's log (or the serial log) shows how far the controller got: joining 
 - **Push to talk** is on by default: hold the **Assistant** button while you talk. Turn it off
   in the Settings card to keep the mic open.
 - The microphone switch takes effect after **Restart dongle**.
+- **Too quiet or too loud.** With no headset in the controller, the controller sends its
+  built-in mic, which is much quieter than a headset's. The Settings card has a gain for each
+  (*Mic gain, headset* and *Mic gain, built-in mic*, -12 to +30 dB); the Microphone card's
+  *Source* line says which one is in use now. A limiter keeps boosted peaks from clipping, but a
+  high gain also raises background noise. Keep the computer's input volume for the dongle at 100%.
 - Pick the dongle as the computer's **input** device. It is tested on Linux; on Windows it is
   untested so far, so a report either way is welcome.
 
