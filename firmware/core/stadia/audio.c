@@ -4,9 +4,13 @@
  *   48 kHz stereo PCM -> Opus (20 ms, 64 kbps, restricted low delay) -> RTP (PT 111, own SSRC
  *   and sequence, timestamp on the 20 ms grid) -> SRTP -> UDP on the display link's selected pair
  *
+ * Every player whose audio route is open gets the same frames: encoded once, then an RTP header
+ * (each player's own sequence numbers) and SRTP (each link's own keys) per player. One encoder
+ * is all the P4 has CPU for, so several controllers share one sound, as players on one couch do.
+ *
  * The producer (the USB audio task on the board, a tone thread in the host test) calls
  * stadia_audio_pcm(); every 960 frames it encodes one Opus frame there and queues it. The rtc
- * task takes the queue in audio_tick() and sends, but only once the controller's audio route is
+ * task takes the queue in audio_tick() and sends, but only once a controller's audio route is
  * open: SetAudioModeRequest(mode 2) went out at READY and was answered (rtc.c).
  *
  * The frames follow the producer's clock, which on the board is the USB host's: one frame per
@@ -74,8 +78,9 @@ static struct {
     uint32_t encoded, trimmed, enc_us_sum, enc_us_max, bytes;
     int64_t last_queued_ms;
     /* rtc task side */
-    volatile bool route; /* frames are wanted (the controller's audio route is open) */
-    uint16_t seq;
+    volatile bool route; /* frames are wanted (some controller's audio route is open) */
+    volatile uint32_t routes; /* one bit per player whose route is open */
+    uint16_t seq[STADIA_MAX_CONTROLLERS];
     uint32_t ssrc;
     uint32_t sent, dropped, underruns, resyncs;
     int64_t stats_at;
@@ -102,7 +107,7 @@ void audio_init(const stadia_config_t *cfg)
     uint8_t r[4];
     port_random(r, sizeof(r));
     A.ssrc = 0x51A00000u | (uint32_t)(r[0] << 8 | r[1]); /* its own SSRC, not the input ACKs' */
-    A.seq = (uint16_t)(r[2] << 8 | r[3]);
+    for (int i = 0; i < STADIA_MAX_CONTROLLERS; i++) A.seq[i] = (uint16_t)((r[2] << 8 | r[3]) + 0x4000 * i);
 }
 
 static bool encoder_ready(void)
@@ -222,11 +227,19 @@ void stadia_audio_pcm(const int16_t *pcm, size_t frames)
     }
 }
 
-void audio_set_route(bool open)
+void audio_set_route(int slot, bool open)
 {
-    if (A.route != open) SLOGI(TAG, "headset audio route %s", open ? "open: sending" : "closed");
-    A.route = open;
-    if (!open) {
+    uint32_t bit = 1u << slot;
+    uint32_t routes = open ? A.routes | bit : A.routes & ~bit;
+    if (routes == A.routes) return;
+    A.routes = routes;
+    if (slot) {
+        SLOGI(TAG, "player %d's headset audio route %s", slot + 1, open ? "open: sending to it too" : "closed");
+    } else {
+        SLOGI(TAG, "headset audio route %s", open ? "open: sending" : "closed");
+    }
+    A.route = routes != 0;
+    if (!A.route) {
         port_lock();
         A.count = 0;
         port_unlock();
@@ -268,7 +281,7 @@ static bool slot_due(void)
     return true;
 }
 
-void audio_tick(rtc_link_t *L)
+void audio_tick(rtc_link_t *const *links, int n)
 {
     while (slot_due()) {
         frame_t f;
@@ -285,20 +298,31 @@ void audio_tick(rtc_link_t *L)
         port_unlock();
         if (!have) break;
 
-        uint8_t pkt[12 + MAX_OPUS + SRTP_TAG_LEN];
-        pkt[0] = 0x80;
-        pkt[1] = (uint8_t)((f.marker ? 0x80 : 0) | PAYLOAD_TYPE);
-        pkt[2] = A.seq >> 8, pkt[3] = A.seq & 0xFF;
-        pkt[4] = f.ts >> 24, pkt[5] = (f.ts >> 16) & 0xFF, pkt[6] = (f.ts >> 8) & 0xFF, pkt[7] = f.ts & 0xFF;
-        pkt[8] = A.ssrc >> 24, pkt[9] = (A.ssrc >> 16) & 0xFF, pkt[10] = (A.ssrc >> 8) & 0xFF, pkt[11] = A.ssrc & 0xFF;
-        memcpy(pkt + 12, f.data, f.len);
-        if (rtc_link_send_srtp(L, pkt, 12 + f.len, sizeof(pkt))) {
-            A.seq++;
+        bool any = false;
+        uint32_t routes = A.routes;
+        for (int i = 0; i < n; i++) {
+            if (!(routes & (1u << i)) || !links[i]) continue;
+            /* built again for each player: SRTP encrypts it in place, with that link's keys */
+            uint8_t pkt[12 + MAX_OPUS + SRTP_TAG_LEN];
+            uint16_t seq = A.seq[i];
+            pkt[0] = 0x80;
+            pkt[1] = (uint8_t)((f.marker ? 0x80 : 0) | PAYLOAD_TYPE);
+            pkt[2] = seq >> 8, pkt[3] = seq & 0xFF;
+            pkt[4] = f.ts >> 24, pkt[5] = (f.ts >> 16) & 0xFF, pkt[6] = (f.ts >> 8) & 0xFF, pkt[7] = f.ts & 0xFF;
+            pkt[8] = A.ssrc >> 24, pkt[9] = (A.ssrc >> 16) & 0xFF, pkt[10] = (A.ssrc >> 8) & 0xFF,
+            pkt[11] = A.ssrc & 0xFF;
+            memcpy(pkt + 12, f.data, f.len);
+            if (rtc_link_send_srtp(links[i], pkt, 12 + f.len, sizeof(pkt))) {
+                A.seq[i]++;
+                any = true;
+            } else {
+                A.dropped++;
+                A.t_dropped++;
+            }
+        }
+        if (any) {
             A.sent++;
             A.t_sent++;
-        } else {
-            A.dropped++;
-            A.t_dropped++;
         }
     }
 

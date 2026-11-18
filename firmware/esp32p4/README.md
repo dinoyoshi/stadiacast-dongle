@@ -156,8 +156,10 @@ controller has to be set up for the dongle's hotspot (above).
 - In Xbox 360 and HID modes the PC sees one gamepad per player (player 1 first), each with its
   own rumble. DualShock 4 and Switch Pro modes stay one gamepad, player 1's: the others connect
   but their input goes nowhere.
-- Headset audio and the microphone are player 1's. The mode combos (Stadia + A/B/X/Y) work on
-  player 1's controller.
+- Every player's headset plays the computer's sound (the same sound for all: one encoder is
+  what the P4 has CPU for), and every player's microphone is mixed into the dongle's one USB
+  microphone; push to talk works on each controller's own Assistant button. The mode combos
+  (Stadia + A/B/X/Y) work on player 1's controller.
 - The LED stays on while any controller is connected.
 - With more than one player in Xbox 360 mode the board uses the same USB ID as with the
   headphones (1209:0001), so Windows gives each gamepad its own Xbox driver.

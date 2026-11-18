@@ -240,7 +240,7 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
           <div class="setting">
             <label>Players at once</label>
             <div class="seg" id="setPlayers" role="group" aria-label="Players at once"></div>
-            <div class="help" id="plHelp">Each controller gets a player number and keeps it. Xbox 360 and HID modes give each player its own gamepad; DualShock 4 and Switch Pro stay one gamepad (player 1). Headphones and mic are player 1's.</div>
+            <div class="help" id="plHelp">Each controller gets a player number and keeps it. Xbox 360 and HID modes give each player its own gamepad; DualShock 4 and Switch Pro stay one gamepad (player 1). Every headset plays the same sound, and every mic is mixed into the one USB mic.</div>
           </div>
           <div class="setting stack">
             <label>Pair a controller <span id="pairPill" class="pill">Idle</span></label>
@@ -741,7 +741,7 @@ function renderPlayersSetting() {
   if (!known) return;
   [...playersSeg.children].forEach((b, i) => b.setAttribute("aria-pressed", String(settings.players === i + 1)));
   $("plHelp").innerHTML = settings.players === settings.players_running
-    ? "Each controller gets a player number and keeps it. Xbox 360 and HID modes give each player its own gamepad; DualShock 4 and Switch Pro stay one gamepad (player 1). Headphones and mic are player 1's."
+    ? "Each controller gets a player number and keeps it. Xbox 360 and HID modes give each player its own gamepad; DualShock 4 and Switch Pro stay one gamepad (player 1). Every headset plays the same sound, and every mic is mixed into the one USB mic."
     : `<b>Changed: restart the dongle</b> to serve ${settings.players} controller${settings.players > 1 ? "s" : ""} (now ${settings.players_running}).`;
   const seg = $("livePlayer");
   const n = settings.players_running || 1;

@@ -98,8 +98,8 @@ void pad_report(int slot, const stadia_pad_t *pad, const char *via)
               pad->ry, pad->lt, pad->rt);
         if (!n) G->stick_log_at = now + STICK_LOG_MS;
     }
-    if (slot == 0 && (!pad->connected || (changed & STADIA_BTN_ASSISTANT))) /* player 1's microphone */
-        mic_set_talk(pad->connected && (pad->buttons & STADIA_BTN_ASSISTANT));
+    if (!pad->connected || (changed & STADIA_BTN_ASSISTANT)) /* this player's push to talk */
+        mic_set_talk(slot, pad->connected && (pad->buttons & STADIA_BTN_ASSISTANT));
     G->last = *pad;
     G->have_last = pad->connected;
     port_lock();
@@ -337,7 +337,7 @@ static void on_closed(rtc_link_t *L)
 
 static void on_media(rtc_link_t *L, const uint8_t *rtp, size_t n)
 {
-    if (L->slot == 0) mic_on_rtp(L, 1, rtp, n); /* the microphone is player 1's */
+    mic_on_rtp(L, 1, rtp, n);
 }
 
 static const rtc_link_ops_t OPS = {

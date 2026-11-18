@@ -67,6 +67,14 @@ typedef struct {
     bool audio_sent, audio_answered;
     uint32_t audio_ticket;
     int64_t audio_at;
+    /* the microphone request (DisplayToController #5) */
+    struct {
+        int64_t ready_at; /* 0: not yet due */
+        int64_t sent_at;
+        uint32_t ticket;
+        uint32_t sent;
+        bool on; /* the last request was true */
+    } mic;
     /* the battery gauge: kept across sessions (a new one reports again only minutes in) */
     int battery_pct; /* -1: no reading yet */
     int64_t battery_at;
@@ -96,14 +104,6 @@ static void send_rpc(disp_t *D, int kind, uint32_t ticket, int code, const char 
 #define MIC_QUIET_MS 3000
 #define MIC_PTT_QUIET_MS 1000 /* DTX still sends a frame every 400 ms or so in silence */
 
-static struct {
-    int64_t ready_at; /* 0: not yet due */
-    int64_t sent_at;
-    uint32_t ticket;
-    uint32_t sent;
-    bool on; /* the last request was true */
-} MIC;
-
 static void send_mic(disp_t *D, bool on, int64_t now)
 {
     uint8_t v[4], msg[8];
@@ -111,28 +111,31 @@ static void send_mic(disp_t *D, bool on, int64_t now)
     if (on) pbw_uint(&b, 1, 1); /* false is the empty BoolValue */
     pbw_t m = PBW(msg, sizeof(msg));
     pbw_bytes(&m, D2C_MIC_ON, b.buf, b.len);
-    MIC.ticket = ++D->ticket;
-    send_rpc(D, 1, MIC.ticket, 0, NULL, m.buf, m.len);
-    if (g_cfg.mic_push_to_talk || MIC.sent < 3) {
+    D->mic.ticket = ++D->ticket;
+    send_rpc(D, 1, D->mic.ticket, 0, NULL, m.buf, m.len);
+    if (g_cfg.mic_push_to_talk || D->mic.sent < 3) {
         SLOGI(DTAG(D), "microphone %s (DisplayToController #5 %s) sent", on ? "on" : "off", on ? "true" : "false");
     }
-    MIC.sent++;
-    MIC.sent_at = now;
-    MIC.on = on;
+    D->mic.sent++;
+    D->mic.sent_at = now;
+    D->mic.on = on;
 }
 
 static void mic_tick(disp_t *D, int64_t now)
 {
-    if (!g_cfg.mic || D->link.slot != 0 || !rtc_link_up(&D->link) || !D->audio_answered) return;
-    if (!MIC.ready_at) MIC.ready_at = now + MIC_ON_DELAY_MS;
-    if (now < MIC.ready_at) return;
+    if (!g_cfg.mic || !rtc_link_up(&D->link) || !D->audio_answered) return;
+    int slot = D->link.slot;
+    if (!D->mic.ready_at) D->mic.ready_at = now + MIC_ON_DELAY_MS;
+    if (now < D->mic.ready_at) return;
     bool ptt = g_cfg.mic_push_to_talk;
-    if (ptt && !mic_talking()) {
-        if (MIC.on) send_mic(D, false, now);
+    if (ptt && !mic_talking(slot)) {
+        if (D->mic.on) send_mic(D, false, now);
         return;
     }
     int64_t quiet = ptt ? MIC_PTT_QUIET_MS : MIC_QUIET_MS;
-    if (!MIC.on || (now - MIC.sent_at >= quiet && now - mic_last_packet_ms() >= quiet)) send_mic(D, true, now);
+    if (!D->mic.on || (now - D->mic.sent_at >= quiet && now - mic_last_packet_ms(slot) >= quiet)) {
+        send_mic(D, true, now);
+    }
 }
 
 /* ---- display RPCs ------------------------------------------------------------------- */
@@ -348,13 +351,13 @@ static void on_rpc(disp_t *D, const uint8_t *data, size_t len)
             pbf_t mode;
             bool in = pb_find(variant.data, variant.len, 1, &mode) && mode.v == 1;
             SLOGI(DTAG(D), "headset %s", in ? "plugged in" : "out");
-            if (D->link.slot == 0) mic_set_headset(in); /* the mic's gain follows the jack */
+            mic_set_headset(D->link.slot, in); /* the mic's gain follows the jack */
         } else {
             SLOGI(DTAG(D), "notification ControllerToDisplay #%u", (unsigned)variant.field);
         }
-    } else if (rpc.kind == 2 && D->link.slot == 0 && MIC.ticket && rpc.ticket == MIC.ticket) {
-        if (rpc.code != 0 || MIC.sent <= 3 || g_cfg.mic_push_to_talk) {
-            SLOGI(DTAG(D), "microphone %s answered: code %u", MIC.on ? "on" : "off", (unsigned)rpc.code);
+    } else if (rpc.kind == 2 && D->mic.ticket && rpc.ticket == D->mic.ticket) {
+        if (rpc.code != 0 || D->mic.sent <= 3 || g_cfg.mic_push_to_talk) {
+            SLOGI(DTAG(D), "microphone %s answered: code %u", D->mic.on ? "on" : "off", (unsigned)rpc.code);
         }
     } else if (rpc.kind == 2 && D->audio_sent && rpc.ticket == D->audio_ticket) {
         /* a repeat in the same boot is FAILED_PRECONDITION ("already in WebRTC Opus mode"): open too */
@@ -393,7 +396,7 @@ static void on_rpc(disp_t *D, const uint8_t *data, size_t len)
             if (f.field == 16) pbf_str(&f, fw, sizeof(fw));
         }
         SLOGI(DTAG(D), "controller: %s, hardware %s, firmware %s, headset %s", product, hw, fw, headset ? "in" : "out");
-        if (D->link.slot == 0) mic_set_headset(headset);
+        mic_set_headset(D->link.slot, headset);
         set_state(D, DS_STATE);
     }
 }
@@ -441,24 +444,22 @@ static void display_on_connected(rtc_link_t *L)
     D->ready_at = 0;
     D->start_sent = false;
     D->audio_sent = D->audio_answered = false; /* the microphone waits for this link's answer */
-    if (L->slot == 0) {
-        memset(&MIC, 0, sizeof(MIC));
-        audio_set_route(false);
-    }
+    memset(&D->mic, 0, sizeof(D->mic));
+    audio_set_route(L->slot, false);
 }
 
 static void display_on_closed(rtc_link_t *L)
 {
     disp_t *D = DS[L->slot];
     D->state = DS_NONE;
-    if (L->slot == 0) audio_set_route(false);
+    audio_set_route(L->slot, false);
     stadia_pad_t released = {.connected = false};
     pad_report(L->slot, &released, DTAG(D));
 }
 
 static void display_on_media(rtc_link_t *L, const uint8_t *rtp, size_t n)
 {
-    if (L->slot == 0) mic_on_rtp(L, 0, rtp, n); /* the microphone is player 1's */
+    mic_on_rtp(L, 0, rtp, n);
 }
 
 static const rtc_link_ops_t DISPLAY_OPS = {
@@ -484,14 +485,13 @@ static void display_tick(disp_t *D)
     if (g_cfg.start_game && up && !D->start_sent && D->ready_at && now - D->ready_at >= START_GAME_DELAY_MS) {
         send_start_game(D);
     }
-    if (D->link.slot != 0) return;
-    /* player 1: the headset audio route, asked for at READY (before StartGame, as stadiacast does) */
+    /* every player: the headset audio route, asked for at READY (before StartGame, as stadiacast
+     * does); they all get the same sound (audio.c) */
     if (g_cfg.audio && up && D->ready_at && !D->audio_sent) send_set_audio_mode(D);
     if (D->audio_sent && up && (D->audio_answered || now - D->audio_at >= AUDIO_ROUTE_WAIT_MS)) {
-        audio_set_route(true);
+        audio_set_route(D->link.slot, true);
     }
     mic_tick(D, now);
-    audio_tick(&D->link);
 }
 
 static void poll_socket(rtc_link_t *L, uint8_t *buf, size_t cap)
@@ -530,10 +530,13 @@ static void rtc_task(void *arg)
             if (r > 0 && FD_ISSET(DS[i]->link.sock, &fds)) poll_socket(&DS[i]->link, buf, cap);
             if (r > 0 && FD_ISSET(G->sock, &fds)) poll_socket(G, buf, cap);
         }
+        rtc_link_t *links[STADIA_MAX_CONTROLLERS];
         for (int i = 0; i < g_nctl; i++) {
             display_tick(DS[i]);
             game_tick(i);
+            links[i] = &DS[i]->link;
         }
+        audio_tick(links, g_nctl);
     }
 }
 

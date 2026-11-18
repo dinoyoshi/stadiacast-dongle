@@ -28,7 +28,8 @@ typedef struct {
     bool mic_push_to_talk;    /* with mic: only while the Assistant button is held */
     /* Several controllers at once: each one that registers gets a player number (0 = player 1)
      * with its own display link and game session on UDP rtc_port + 2 * player and
-     * game_port + 2 * player. Headset audio and the microphone are player 1's only. */
+     * game_port + 2 * player. Every player's headset plays the same sound (one encoder), and
+     * every player's microphone is mixed into the one microphone stream. */
     uint8_t max_controllers;  /* 1..STADIA_MAX_CONTROLLERS; 0 = 1 */
     /* The device id each player had before (as stadia_controller_cb_t reported it), so a
      * controller gets its old player number back; NULL or "" for none. Copied. */

@@ -21,7 +21,8 @@ computer see lives in a portable core, and each board only adds its own Wi-Fi, U
 - **Every button, stick and trigger**, with the game's **rumble** sent back to the controller.
 - **Headset audio**: plug headphones into the controller and pick the dongle as your sound
   output. The headset's **microphone** becomes the computer's microphone, with push to talk on
-  the Assistant button. With no headset, the controller's own built-in microphone is used.
+  the Assistant button. With no headset, the controller's own built-in microphone is used. With several
+  controllers, every headset plays the same sound and every mic is mixed into one.
 - **Four controller types**, switched by holding Stadia + A, B, X or Y: Xbox 360 (the default),
   DualShock 4, Switch Pro, or a plain HID gamepad. The dongle remembers your choice.
 - **Up to four controllers at once**, each showing up as its own gamepad.
