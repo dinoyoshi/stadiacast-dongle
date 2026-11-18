@@ -25,7 +25,7 @@
  *   | forget <player 1-4>  (that player number goes to the next new controller)
  *   | pair [stop]  (give a controller in Bluetooth setup mode the hotspot: pair.c; progress comes
  *     as {"t":"pair","state":...,"msg":...} whenever it changes)
- *   keys: mode 0-3, gain -12..0 (dB before the Opus encoder), complexity 1-10,
+ *   keys: mode 0-4, gain -12..0 (dB before the Opus encoder), complexity 1-10,
  *   mic_complexity 1-10 (the complexity while the mic runs, when lower), bitrate 32-160 (Opus kbit/s), mic 0/1 (after a
  *   restart), ptt 0/1 (push to talk), mic_gain and mic_gain_builtin -12..30 (dB: the microphone with a
  *   headset in the controller's jack, and the controller's built-in mic), rumble 0/1, rumble_left and rumble_right 0-200 (% strength),
@@ -189,10 +189,11 @@ static void send_info(void)
     const uint8_t *mac = b.mac;
     sendf("{\"t\":\"info\",\"fw\":\"%s\",\"project\":\"%s\",\"built\":\"%s %s\",\"idf\":\"%s\",\"chip\":\"%s\","
           "\"cores\":%d,\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"ssid\":\"%s\",\"channel\":%d,"
-          "\"audio\":%s,\"modes\":[\"%s\",\"%s\",\"%s\",\"%s\"]}",
+          "\"audio\":%s,\"modes\":[\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"]}",
           b.fw, b.project, b.date, b.time, b.sdk, b.chip, b.cores, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
           b.ssid, b.channel, K.build->audio ? "true" : "false", pad_mode_info(USB_PAD_XINPUT)->name,
-          pad_mode_info(USB_PAD_DS4)->name, pad_mode_info(USB_PAD_SWITCH)->name, pad_mode_info(USB_PAD_HID)->name);
+          pad_mode_info(USB_PAD_DS4)->name, pad_mode_info(USB_PAD_SWITCH)->name, pad_mode_info(USB_PAD_HID)->name,
+          pad_mode_info(USB_PAD_STADIA)->name);
 }
 
 void console_set_pairing(const dongle_pair_t *pair)
@@ -310,7 +311,7 @@ static void cmd_set(const char *key, const char *val)
     long v = strtol(val, &end, 10);
     if (end == val) { reply_err("not a number"); return; }
     if (!strcmp(key, "mode")) {
-        if (v < 0 || v >= USB_PAD_MODE_COUNT) { reply_err("mode is 0-3"); return; }
+        if (v < 0 || v >= USB_PAD_MODE_COUNT) { reply_err("mode is 0-4"); return; }
         sendf("{\"t\":\"ok\",\"key\":\"mode\",\"reconnect\":%s}", (usb_pad_mode_t)v != board_usb_mode() ? "true" : "false");
         port_sleep_ms(50); /* let the answer leave before the board leaves the bus */
         if (!pad_mode_request((usb_pad_mode_t)v)) { reply_err("busy changing modes"); return; }

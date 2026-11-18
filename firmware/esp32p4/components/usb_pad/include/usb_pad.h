@@ -6,9 +6,11 @@
  *               for Sony hardware)
  *   Switch Pro  a Nintendo Switch Pro Controller over USB: the Switch, Steam, Linux
  *   HID         a plain HID gamepad: macOS, Android, older DirectInput PC games
+ *   Stadia      a wired Stadia Controller (18D1:9400): Linux's own Stadia support (the
+ *               kernel's hid-google-stadiaff rumble, SDL and Steam)
  * The mode can change at run time: the board leaves the bus and comes back as the new device.
  *
- * Several players: in the Xbox 360 and HID modes the board can be up to USB_PAD_MAX_PLAYERS
+ * Several players: in the Xbox 360, HID and Stadia modes the board can be up to USB_PAD_MAX_PLAYERS
  * gamepads at once (one interface each, player 1 first), one per Stadia controller. The
  * DualShock 4 and Switch Pro modes are one gamepad (hosts know those by their USB ID).
  */

@@ -1,6 +1,6 @@
 # The USB gamepad modes' descriptors, reports and protocols (pad_modes.h), one mode_<name>.c per
 # mode. No USB stack here: the board's USB device code sends what these build.
-set(GAMEPAD_SRCS pad_modes.c mode_xinput.c mode_ds4.c mode_switch.c mode_hid.c)
+set(GAMEPAD_SRCS pad_modes.c mode_xinput.c mode_ds4.c mode_switch.c mode_hid.c mode_stadia.c)
 
 if(ESP_PLATFORM)
     idf_component_register(

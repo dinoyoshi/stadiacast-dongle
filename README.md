@@ -23,8 +23,9 @@ computer see lives in a portable core, and each board only adds its own Wi-Fi, U
   output. The headset's **microphone** becomes the computer's microphone, with push to talk on
   the Assistant button. With no headset, the controller's own built-in microphone is used. With several
   controllers, every headset plays the same sound and every mic is mixed into one.
-- **Four controller types**, switched by holding Stadia + A, B, X or Y: Xbox 360 (the default),
-  DualShock 4, Switch Pro, or a plain HID gamepad. The dongle remembers your choice.
+- **Five controller types**, switched by holding Stadia + A, B, X, Y or Capture: Xbox 360 (the
+  default), DualShock 4, Switch Pro, a plain HID gamepad, or a wired Stadia Controller for
+  Linux's own Stadia support. The dongle remembers your choice.
 - **Up to four controllers at once**, each showing up as its own gamepad.
 - **A web console** at [dinoyoshi.github.io/stadiacast-dongle](https://dinoyoshi.github.io/stadiacast-dongle/).
   Open it in Chrome or Edge with the dongle plugged in and you get live stats (battery,
@@ -74,6 +75,7 @@ only, ⚪ built but not tried yet, — not available.
 | DualShock 4 | 054C:09CC | yes | yes | no, player 1 only | PC games and Steam with PlayStation prompts (not a real PS4) |
 | Switch Pro | 057E:2009 | yes | no | no, player 1 only | Nintendo Switch (wired), Steam, Linux |
 | HID gamepad | 303A:4047 | no | yes | yes | macOS, Android, older DirectInput games |
+| Stadia | 18D1:9400 | yes | yes | yes | Linux's own Stadia support (kernel rumble driver, SDL, Steam) |
 
 ### Tested on
 
@@ -81,8 +83,8 @@ What has been tried with a real controller and a real board, by the computer it 
 
 | | Linux | Windows | macOS | Nintendo Switch |
 |---|---|---|---|---|
-| Buttons, sticks, triggers | ✅ all four modes | ✅ | ⚪ | ⚪ |
-| Rumble | ✅ Xbox 360 mode (DS4 and Switch Pro ⚪) | ⚪ | — (HID mode has none) | ⚪ |
+| Buttons, sticks, triggers | ✅ Xbox 360, DS4, Switch Pro, HID (Stadia ⚪) | ✅ | ⚪ | ⚪ |
+| Rumble | ✅ Xbox 360 mode (DS4, Switch Pro and Stadia ⚪) | ⚪ | — (HID mode has none) | ⚪ |
 | Headset audio | ✅ | ✅ Xbox 360, DS4 and HID modes | ⚪ | — |
 | Headset microphone | ✅ | ⚪ | ⚪ | — |
 | Built-in microphone | ✅ | ⚪ | ⚪ | — |

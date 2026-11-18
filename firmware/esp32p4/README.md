@@ -19,6 +19,7 @@ is in [docs/progress.md](docs/progress.md).
 | Rumble from the game to the controller's motors | tested in Xbox 360 mode (Linux) |
 | USB headphones: the PC's sound plays on the controller's 3.5 mm jack (Opus) | tested on Linux, and on Windows in Xbox 360, DualShock 4 and HID modes |
 | Four controller modes: Xbox 360, DualShock 4, Switch Pro, HID gamepad | tested on Linux (Steam sees DS4 mode as a PS4 controller) |
+| A fifth mode, Stadia: a wired Stadia Controller (18D1:9400) for Linux's own Stadia support | host build; board test pending |
 | Runs from the OTG USB-C port alone, LED shows its state | tested on the board |
 | Updates the C6's ESP-Hosted firmware from the P4 | done once: 2.12.11 to 2.13.1 |
 | Headset microphone: the headset on the controller is the PC's USB microphone, push to talk on the Assistant button | tested on Linux (PipeWire) |
@@ -27,7 +28,7 @@ is in [docs/progress.md](docs/progress.md).
 | Controller battery and connection quality in the web console | battery tested on the board |
 | Firmware updates from the web console, with rollback | tested on the board |
 | Pairing a controller from the web console over the board's own Bluetooth, no PC tools | tested on the board |
-| Several controllers at once (up to 4), one USB gamepad each in Xbox 360 and HID modes | tested on a PC with two fake controllers; on the board with one real controller only |
+| Several controllers at once (up to 4), one USB gamepad each in Xbox 360, HID and Stadia modes | tested on a PC with two fake controllers; on the board with one real controller only |
 
 The controller needs its **Wi-Fi firmware** (ours runs build 316382; the Python receiver is
 tested with `ota.282115`). See [Known limits](#known-limits) for what is rough.
@@ -153,21 +154,21 @@ controller has to be set up for the dongle's hotspot (above).
 - Each controller gets a **player number** the first time it connects and keeps it, also
   across restarts (saved on the board). A new controller takes a free number; if all are taken,
   the one not heard from the longest. **Forget** in the console frees a number.
-- In Xbox 360 and HID modes the PC sees one gamepad per player (player 1 first), each with its
-  own rumble. DualShock 4 and Switch Pro modes stay one gamepad, player 1's: the others connect
+- In Xbox 360, HID and Stadia modes the PC sees one gamepad per player (player 1 first), each
+  with its own rumble. DualShock 4 and Switch Pro modes stay one gamepad, player 1's: the others connect
   but their input goes nowhere.
 - Every player's headset plays the computer's sound (the same sound for all: one encoder is
   what the P4 has CPU for), and every player's microphone is mixed into the dongle's one USB
   microphone; push to talk works on each controller's own Assistant button. The mode combos
-  (Stadia + A/B/X/Y) work on player 1's controller.
+  (Stadia + A/B/X/Y/Capture) work on player 1's controller.
 - The LED stays on while any controller is connected.
 - With more than one player in Xbox 360 mode the board uses the same USB ID as with the
   headphones (1209:0001), so Windows gives each gamepad its own Xbox driver.
 
 ### Controller modes
 
-The dongle can be four kinds of USB controller. Hold the **Stadia button with a face button for
-1.5 s** (not 4 s: that turns the controller off). The board leaves USB, comes back as the new
+The dongle can be five kinds of USB controller. Hold the **Stadia button with a face button (or
+Capture) for 1.5 s** (not 4 s: that turns the controller off). The board leaves USB, comes back as the new
 controller, and pulses the controller's motors once per mode number. A press of the board's
 **BOOT button** steps to the next mode instead, with or without the controller. Either way the
 LED blinks the mode number, and the board remembers the choice across power-ups.
@@ -178,23 +179,32 @@ LED blinks the mode number, and the board remembers the choice across power-ups.
 | Stadia + B | DualShock 4 | 054C:09CC | PC games and Steam with PlayStation prompts; not a real PS4 (it checks for Sony hardware) | yes | yes |
 | Stadia + X | Switch Pro Controller | 057E:2009 | Nintendo Switch (wired), Steam, Linux | yes | no |
 | Stadia + Y | HID gamepad | 303A:4047 | macOS, Android, older DirectInput games | no | yes |
+| Stadia + Capture | Stadia Controller (wired) | 18D1:9400 | Linux: the kernel's Stadia rumble driver (`hid-google-stadiaff`), SDL's and Steam's Stadia support, so games show Stadia buttons and names | yes | yes |
 
 On the Switch, turn on *System Settings → Controllers and Sensors → Pro Controller Wired
 Communication*.
+
+Stadia mode is the controller's own USB layout (input report 3, rumble output report 5), so
+Linux treats the dongle as a Stadia Controller plugged in by cable: the kernel's
+`hid-google-stadiaff` driver (kernel 5.11 and later, in most distributions) gives the
+gamepad force feedback, and SDL and Steam use their Stadia drivers, Capture and Assistant
+included. Nothing is lost next to the other modes: the headphones, the microphone and up to four
+players work as in Xbox 360 mode. Steam knows it on every system; outside Steam, Windows and
+macOS see a plain HID gamepad without rumble.
 
 ### Button mapping
 
 Face buttons map by position: the bottom one (Stadia A) is Xbox A, PlayStation cross and
 Nintendo B.
 
-| Stadia | Xbox 360 | DualShock 4 | Switch Pro | HID |
-|---|---|---|---|---|
-| Stadia | Guide | PS | Home | button 9 |
-| Menu (≡) | Start | Options | + | button 8 |
-| Options (⋯) | Back | Share | − | button 7 |
-| Capture | (none) | touchpad click | Capture | button 12 |
-| Assistant | (none) | (none) | (none) | button 13 |
-| L2 / R2 | analog triggers | analog + digital | ZL / ZR (digital) | analog axes |
+| Stadia | Xbox 360 | DualShock 4 | Switch Pro | HID | Stadia mode |
+|---|---|---|---|---|---|
+| Stadia | Guide | PS | Home | button 9 | Stadia |
+| Menu (≡) | Start | Options | + | button 8 | Menu |
+| Options (⋯) | Back | Share | − | button 7 | Options |
+| Capture | (none) | touchpad click | Capture | button 12 | Capture |
+| Assistant | (none) | (none) | (none) | button 13 | Assistant |
+| L2 / R2 | analog triggers | analog + digital | ZL / ZR (digital) | analog axes | analog + digital |
 
 Sticks are passed through raw (no deadzone, as a real pad). Assistant is also push to talk for
 the headset microphone (below).
@@ -336,7 +346,7 @@ tied to this one ([firmware/README.md](../README.md) has the whole layout):
 | path | what |
 |---|---|
 | `../core/stadia/` | the receiver: HTTPS, GMsg signalling, ICE/DTLS-SRTP, display and game sessions, Opus audio, microphone; plain C, also builds for Linux |
-| `../core/gamepad/` | the USB gamepad modes: Xbox 360, DualShock 4, Switch Pro and HID descriptors and reports, one `mode_<name>.c` each; plain C |
+| `../core/gamepad/` | the USB gamepad modes: Xbox 360, DualShock 4, Switch Pro, HID and Stadia descriptors and reports, one `mode_<name>.c` each; plain C |
 | `../core/dongle/` | the dongle's logic: input mapping, mode combos and the BOOT button, rumble settings and test, players, LED patterns, the web console's protocol (`console.c`), firmware updates over it (`ota.c`), pairing over Bluetooth LE (`pair.c`); plain C |
 | `../core/opus/` | libopus 1.5.2 (git submodule), fixed point |
 | `../platform/port_api/` | `stadia_port.h`: the OS services the core needs (tasks, time, memory, locks, log) |

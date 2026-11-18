@@ -240,7 +240,7 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2)
           <div class="setting">
             <label>Players at once</label>
             <div class="seg" id="setPlayers" role="group" aria-label="Players at once"></div>
-            <div class="help" id="plHelp">Each controller gets a player number and keeps it. Xbox 360 and HID modes give each player its own gamepad; DualShock 4 and Switch Pro stay one gamepad (player 1). Every headset plays the same sound, and every mic is mixed into the one USB mic.</div>
+            <div class="help" id="plHelp">Each controller gets a player number and keeps it. Xbox 360, HID and Stadia modes give each player its own gamepad; DualShock 4 and Switch Pro stay one gamepad (player 1). Every headset plays the same sound, and every mic is mixed into the one USB mic.</div>
           </div>
           <div class="setting stack">
             <label>Pair a controller <span id="pairPill" class="pill">Idle</span></label>
@@ -453,8 +453,9 @@ const FILTERS = [
   { usbVendorId: 0x054c, usbProductId: 0x09cc }, // DualShock 4
   { usbVendorId: 0x057e, usbProductId: 0x2009 }, // Switch Pro
   { usbVendorId: 0x303a, usbProductId: 0x4047 }, // HID gamepad
+  { usbVendorId: 0x18d1, usbProductId: 0x9400 }, // Stadia
 ];
-const MODES = ["Xbox 360", "DualShock 4", "Switch Pro", "HID gamepad"];
+const MODES = ["Xbox 360", "DualShock 4", "Switch Pro", "HID gamepad", "Stadia"];
 const ours = (p) => {
   const i = p.getInfo ? p.getInfo() : {};
   return FILTERS.some((f) => f.usbVendorId === i.usbVendorId && f.usbProductId === i.usbProductId);
@@ -741,7 +742,7 @@ function renderPlayersSetting() {
   if (!known) return;
   [...playersSeg.children].forEach((b, i) => b.setAttribute("aria-pressed", String(settings.players === i + 1)));
   $("plHelp").innerHTML = settings.players === settings.players_running
-    ? "Each controller gets a player number and keeps it. Xbox 360 and HID modes give each player its own gamepad; DualShock 4 and Switch Pro stay one gamepad (player 1). Every headset plays the same sound, and every mic is mixed into the one USB mic."
+    ? "Each controller gets a player number and keeps it. Xbox 360, HID and Stadia modes give each player its own gamepad; DualShock 4 and Switch Pro stay one gamepad (player 1). Every headset plays the same sound, and every mic is mixed into the one USB mic."
     : `<b>Changed: restart the dongle</b> to serve ${settings.players} controller${settings.players > 1 ? "s" : ""} (now ${settings.players_running}).`;
   const seg = $("livePlayer");
   const n = settings.players_running || 1;
@@ -1236,7 +1237,7 @@ function demoLink() {
     if (talk && Math.random() < 0.35) c.under += 1;
     if (talk || !st.ptt) { c.mpk += 50; c.mdec += 50; }
     const players = [{ known: true, id: "demo-controller-1", ip: "192.168.4.2", seen: 0, state: "input", disp: true, game: true, bat: 76 - Math.floor(tick / 240), ping: 4200, in: [c.ins, c.gaps], usb: true }];
-    for (let i = 1; i < st.players_running; i++) players.push(i === 1 && pl2.known ? { known: true, id: pl2.id, ip: "192.168.4.3", seen: 3600 + tick, state: "none", disp: false, game: false, bat: 41, ping: null, in: [0, 0], usb: st.mode === 0 || st.mode === 3 } : { known: false, id: "", ip: "", seen: -1, state: "none", disp: false, game: false, bat: null, ping: null, in: [0, 0], usb: st.mode === 0 || st.mode === 3 });
+    for (let i = 1; i < st.players_running; i++) players.push(i === 1 && pl2.known ? { known: true, id: pl2.id, ip: "192.168.4.3", seen: 3600 + tick, state: "none", disp: false, game: false, bat: 41, ping: null, in: [0, 0], usb: st.mode === 0 || st.mode >= 3 } : { known: false, id: "", ip: "", seen: -1, state: "none", disp: false, game: false, bat: null, ping: null, in: [0, 0], usb: st.mode === 0 || st.mode >= 3 });
     emit({ t: "stats", up: c.up, players, cpu: [Math.round(38 + Math.random() * 10 + (talk ? 20 : 0)), Math.round(22 + Math.random() * 8)], heap: [61440 + Math.round(Math.random() * 900), 48210, 31.2e6],
       ctl: { state: "input", disp: true, game: true, rssi: Math.round(-52 - Math.random() * 6), sta: 1,
         bat: 76 - Math.floor(tick / 240), bat_age: 95 + tick % 240, ping: [3800 + Math.round(Math.random() * 4000), 3100 + Math.round(Math.random() * 5000)],

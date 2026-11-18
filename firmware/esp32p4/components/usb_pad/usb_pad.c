@@ -19,7 +19,7 @@
  * driver, which gives interface 0 to the Xbox driver through the "XUSB10" compatible ID in a
  * Microsoft OS 2.0 descriptor (BOS, bcdUSB 2.10) and interfaces 1-3 to usbaudio2. Linux's xpad
  * binds any FF/5D/01 interface from the pid.codes vendor, so Linux keeps working.
- * Several players (Xbox 360 and HID modes): interfaces 0 .. players - 1 are one gamepad each,
+ * Several players (Xbox 360, HID and Stadia modes): interfaces 0 .. players - 1 are one gamepad each,
  * player 1 first, with endpoints 0x81/0x01, 0x85/0x05, 0x86/0x06 and 0x87/0x07; the headset and
  * the console follow. Xbox 360 with more than one pad takes the pid.codes ID and the MS OS 2.0
  * descriptor as with audio, one XUSB10 function per gamepad interface, so Windows gives each its
