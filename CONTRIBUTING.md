@@ -93,7 +93,8 @@ git push origin v1.0.0
 A tag with a hyphen (`v1.1.0-rc1`) makes a pre-release. Tag a commit that was tested on the board.
 Publishing a full release (not a pre-release) also redeploys GitHub Pages, so the web console's
 **Install latest** offers it to everyone. The build of `main` stays on Pages under
-`firmware/dev/`, for testing before a release with **Install a .bin file**.
+`firmware/<board>/dev/`, for testing before a release with **Install a .bin file**. Each board
+has its own folder, and the console picks the one for the board the dongle reports.
 
 ## License
 

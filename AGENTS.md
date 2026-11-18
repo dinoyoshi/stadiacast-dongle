@@ -63,8 +63,8 @@ idf.py build
 
 CI: `.github/workflows/firmware-host.yml` runs the host tests; `console-pages.yml` builds the
 board firmware on every PR and, on `main` and on each release, publishes the web console to GitHub
-Pages with the latest release's firmware (the console's "Install latest") and the build of `main`
-in `firmware/dev/`; `release.yml` turns a pushed `v*` tag into a GitHub release with the .bin
+Pages with each board's latest release in `firmware/<board>/` (the console's "Install latest"
+picks the dongle's board) and the build of `main` in `firmware/<board>/dev/`; `release.yml` turns a pushed `v*` tag into a GitHub release with the .bin
 files and redeploys Pages. Both build through `firmware-build.yml`. Never push a tag
 without the maintainer's OK.
 

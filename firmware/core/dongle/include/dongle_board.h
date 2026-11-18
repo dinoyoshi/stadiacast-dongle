@@ -68,6 +68,11 @@ void board_console_set_raw(board_console_raw_cb_t cb);
 
 typedef struct {
     const char *fw, *project, *date, *time, *sdk; /* firmware version, its build, the SDK's version */
+    /* The board's id, as in its firmware's file names and folder on GitHub Pages
+     * (stadiacast-dongle-<board>.bin, firmware/<board>/): the web console's Install latest picks
+     * the build for this board by it. The image's project name must be the board's own too
+     * (board_fw_finish() refuses another), so one board never boots another's firmware. */
+    const char *board;
     char chip[32];                                 /* e.g. "ESP32-P4 rev v1.3" */
     int cores;
     uint8_t mac[6];
@@ -110,7 +115,8 @@ void board_fw_rollback(void);
 /* Writing an image to the next slot: NULL when it worked, else what went wrong, for a person. */
 const char *board_fw_begin(size_t size);
 const char *board_fw_write(const void *data, size_t n);
-/* All written: check it is an image for this board and this project, and boot it next.
+/* All written: check it is an image for this board and this project (the same project name as
+ * the running firmware: each board's build has its own), and boot it next.
  * version: the image's own (33 bytes). */
 const char *board_fw_finish(char version[33]);
 void board_fw_abort(void);

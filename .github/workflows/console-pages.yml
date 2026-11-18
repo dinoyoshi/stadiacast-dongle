@@ -1,12 +1,14 @@
 # The dongle's web console (firmware/esp32p4/console/) on GitHub Pages, with the firmware next to
 # it (same origin, so the console can download it: no CORS):
-#   firmware/       the latest release (not a pre-release): firmware.json and the board's .bin files.
-#                   The console's "Install latest" installs the app image firmware.json names.
-#   firmware/dev/   the build of main at the last deploy, for testing before a release
-#                   ("Install a .bin file" with firmware/dev/stadiacast-dongle-<board>.bin).
-# Before the first release with the files, firmware/ falls back to the build of main. The old
-# names (stadiacast-dongle.bin, stadiacast-dongle-full.bin) stay as copies of the FireBeetle 2
-# ESP32-P4's files in firmware/, for links made before the board was in the name.
+#   firmware/<board>/       that board's latest release (not a pre-release): firmware.json and the
+#                           .bin files. The console's Install latest takes the folder of the board
+#                           the dongle reports ("board" in its info line).
+#   firmware/<board>/dev/   the build of main at the last deploy, for testing before a release
+#                           (Install a .bin file with its stadiacast-dongle-<board>.bin).
+#   firmware/boards.json    the boards and the version each has.
+# A board with no release yet gets the build of main in firmware/<board>/. firmware/ itself (with
+# the old names stadiacast-dongle.bin and stadiacast-dongle-full.bin) is a copy of the FireBeetle 2
+# ESP32-P4's folder, for links made before each board had one.
 # It deploys on a push to main, when a release is published (release.yml also starts it once the
 # release has its files), and by hand. Pull requests only build the firmware.
 # One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
@@ -64,38 +66,62 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: firmware
-          path: site/firmware/dev
-      - name: the latest release's firmware
+          path: main-build
+      - name: the firmware for each board
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+        shell: python3 {0}
         run: |
-          out=site/firmware
-          # newest release first, pre-releases and drafts left out; the first one with firmware files
-          for tag in $(gh release list --exclude-pre-releases --exclude-drafts --limit 20 --json tagName -q '.[].tagName'); do
-            rm -rf rel && mkdir rel
-            gh release download "$tag" -D rel -p 'stadiacast-dongle-*.bin' -p 'firmware*.json' || continue
-            json=
-            for j in rel/firmware-firebeetle2-esp32p4.json rel/firmware.json; do
-              [ -f "$j" ] && { json=$j; break; }
-            done
-            [ -n "$json" ] || continue
-            echo "Install latest: $tag"
-            cp rel/*.bin "$out/"
-            cp "$json" "$out/firmware.json"
-            break
-          done
-          if [ ! -f "$out/firmware.json" ]; then
-            echo "::warning::no release with firmware files: Install latest gets the build of main"
-            cp "$out"/dev/* "$out/"
-          fi
-          # the old names, for older links (v1.0.0 already uses them)
-          app="$(jq -r .app.file "$out/firmware.json")"
-          full="$(jq -r .full.file "$out/firmware.json")"
-          [ "$app" = stadiacast-dongle.bin ] || cp "$out/$app" "$out/stadiacast-dongle.bin"
-          [ "$full" = stadiacast-dongle-full.bin ] || cp "$out/$full" "$out/stadiacast-dongle-full.bin"
-          ls -l "$out" "$out/dev"
-          cat "$out/firmware.json"
+          import glob, json, os, shutil, subprocess
+          LEGACY = "firebeetle2-esp32p4"  # firmware.json without "board" (v1.0.0), and firmware/ itself
+          out = "site/firmware"
+
+          def publish(src_dir, fw, dest):
+              os.makedirs(dest, exist_ok=True)
+              for k in ("app", "full"):
+                  shutil.copy(os.path.join(src_dir, fw[k]["file"]), dest)
+              json.dump(fw, open(os.path.join(dest, "firmware.json"), "w"), indent=1)
+
+          # The build of main: firmware/<board>/dev/, for testing before a release.
+          dev = json.load(open("main-build/firmware.json"))
+          publish("main-build", dev, f"{out}/{dev.get('board', LEGACY)}/dev")
+
+          # Each board's newest release (pre-releases and drafts left out): firmware/<board>/, which
+          # the console's Install latest uses for a dongle that reports that board.
+          tags = subprocess.run(["gh", "release", "list", "--exclude-pre-releases", "--exclude-drafts",
+                                 "--limit", "30", "--json", "tagName", "-q", ".[].tagName"],
+                                check=True, capture_output=True, text=True).stdout.split()
+          boards = {}
+          for tag in tags:  # newest first
+              rel = f"rel/{tag}"
+              os.makedirs(rel, exist_ok=True)
+              if subprocess.run(["gh", "release", "download", tag, "-D", rel,
+                                 "-p", "stadiacast-dongle-*.bin", "-p", "firmware*.json"]).returncode:
+                  continue
+              for j in sorted(glob.glob(f"{rel}/firmware*.json")):
+                  fw = json.load(open(j))
+                  board = fw.get("board", LEGACY)
+                  if board in boards:
+                      continue
+                  publish(rel, fw, f"{out}/{board}")
+                  boards[board] = {"version": fw["version"], "release": tag}
+                  print(f"Install latest for {board}: {tag}")
+          for board in os.listdir(out):  # a board with a build of main but no release yet
+              if board not in boards and os.path.isdir(f"{out}/{board}/dev"):
+                  print(f"::warning::{board} has no release with firmware: Install latest gets the build of main")
+                  fw = json.load(open(f"{out}/{board}/dev/firmware.json"))
+                  publish(f"{out}/{board}/dev", fw, f"{out}/{board}")
+                  boards[board] = {"version": fw["version"], "release": None}
+          json.dump({"boards": boards}, open(f"{out}/boards.json", "w"), indent=1)
+
+          # firmware/ itself and the old file names: the FireBeetle's, for links made before
+          # each board had its own folder.
+          fw = json.load(open(f"{out}/{LEGACY}/firmware.json"))
+          publish(f"{out}/{LEGACY}", fw, out)
+          shutil.copy(f"{out}/{fw['app']['file']}", f"{out}/stadiacast-dongle.bin")
+          shutil.copy(f"{out}/{fw['full']['file']}", f"{out}/stadiacast-dongle-full.bin")
+          subprocess.run(["ls", "-lR", out])
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

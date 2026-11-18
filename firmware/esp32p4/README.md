@@ -288,12 +288,12 @@ The **Update firmware** card installs new firmware over the same USB cable: no E
 esptool, no BOOT button.
 
 - **Install latest** takes the latest [release](https://github.com/dinoyoshi/stadiacast-dongle/releases)
-  (not a pre-release), which is published next to the page
-  (`firmware/stadiacast-dongle-firebeetle2-esp32p4.bin`, built by CI with ESP-IDF 5.5.6 and the
+  (not a pre-release) for the board the dongle reports, which is published next to the page
+  (`firmware/firebeetle2-esp32p4/stadiacast-dongle-firebeetle2-esp32p4.bin`, built by CI with ESP-IDF 5.5.6 and the
   defaults in `sdkconfig.defaults`). The card shows which version runs and which is the latest.
 - **Install a .bin file** takes any other app image: a release's or pre-release's
   `stadiacast-dongle-firebeetle2-esp32p4.bin`, the build of `main` from
-  [firmware/dev/](https://dinoyoshi.github.io/stadiacast-dongle/firmware/dev/stadiacast-dongle-firebeetle2-esp32p4.bin)
+  [firmware/firebeetle2-esp32p4/dev/](https://dinoyoshi.github.io/stadiacast-dongle/firmware/firebeetle2-esp32p4/dev/stadiacast-dongle-firebeetle2-esp32p4.bin)
   (newer than the release, less tested), or your own `build/stadiacast_dongle.bin` (the app image,
   not the merged full-flash one).
 
@@ -318,7 +318,8 @@ at the top of `../core/dongle/console.c` (and the firmware update's at the top o
 
 GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Actions". The
 `Web console and firmware (GitHub Pages)` workflow then publishes `console/` with the latest
-release's firmware in `firmware/` and the build of `main` in `firmware/dev/`, on every change under
+release's firmware for each board in `firmware/<board>/` and the build of `main` in
+`firmware/<board>/dev/`, on every change under
 `firmware/esp32p4/`, `firmware/core/` or `firmware/platform/` on `main` and whenever a release is
 published (pull requests only build the firmware).
 

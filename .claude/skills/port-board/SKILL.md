@@ -97,8 +97,13 @@ Only the FireBeetle's image is published to Pages unless asked otherwise.
 
 Name the board's files as `firmware-build.yml` does for the FireBeetle: a short board id
 (`<maker-board>-<chip>`, for example `firebeetle2-esp32p4`) in `stadiacast-dongle-<board>.bin`,
-`stadiacast-dongle-<board>-full.bin` and `"board"` in its firmware.json. To ship it in releases,
-add its build to `.github/workflows/release.yml` (its own artifact, `firmware-<board>.json`).
+`stadiacast-dongle-<board>-full.bin` and `"board"` in its firmware.json. The same id goes in
+`board_info()`'s `board` (the console's Install latest looks for `firmware/<board>/` on Pages by
+it), and the board's firmware image needs its own project name (an ESP-IDF `project()` other than
+`stadiacast_dongle`): updates are refused between different project names, which keeps one
+board's firmware off another. To ship it in releases, add its build to
+`.github/workflows/release.yml` (its own artifact, `firmware-<board>.json`); the Pages deploy
+then puts each board's latest release in its own folder by itself.
 
 ## 8. Docs
 

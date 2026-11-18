@@ -628,7 +628,7 @@ function onLine(line) {
     let m;
     try { m = JSON.parse(line); } catch (e) { return; }
     switch (m.t) {
-      case "info": info = m; renderInfo(); otaReconnected(); break;
+      case "info": info = m; renderInfo(); otaReconnected(); loadLatest(); break;
       case "settings": settings = m; renderSettings(); break;
       case "stats": renderStats(m); break;
       case "tasks": renderTasks(m); break;
@@ -1036,17 +1036,26 @@ $("logSave").onclick = () => {
 /* ---- firmware update (core/dongle/ota.c): "ota begin <size> <sha256>", then the image as raw bytes,
    never more than the board's window past its last "at" ---- */
 let otaStatus = null;   // the board's {"t":"ota","state":"idle",...}
-let latest = null;      // firmware/firmware.json, published with this page
+let latest = null;      // firmware/<board>/firmware.json, published with this page: the latest release for this board
+let latestBase = null;  // the folder it came from, "firmware/<board>/"
+/* The board the dongle runs on, from its info line. Firmware from before boards had ids only ran on
+   the FireBeetle 2 ESP32-P4. Before a dongle is connected the page shows the FireBeetle's. */
+const DEFAULT_BOARD = "firebeetle2-esp32p4";
+const dongleBoard = () => (info && info.board) || DEFAULT_BOARD;
 let ota = null;         // the update under way: {bytes, version, sent, acked, win, raw, pumping}
 const OTA_CHUNK = 4096;
 
 async function loadLatest() {
+  const base = `firmware/${encodeURIComponent(dongleBoard())}/`;
+  if (base === latestBase && latest) { renderFw(); return; }
   try {
-    const r = await fetch("firmware/firmware.json", { cache: "no-store" });
+    const r = await fetch(base + "firmware.json", { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
     latest = await r.json();
+    latestBase = base;
   } catch (e) {
     latest = null;
+    latestBase = null;
   }
   renderFw();
 }
@@ -1055,12 +1064,13 @@ function renderFw() {
   const running = info ? info.fw : null;
   $("fwRunning").innerHTML = running == null ? "–" :
     `${esc(running)}` + (otaStatus ? ` <span class="sub">${esc(otaStatus.running)}${otaStatus.trial ? ", on trial" : ""}</span>` : "");
-  $("fwLatest").innerHTML = latest ? `${esc(latest.version)} <span class="sub">${esc((latest.built || "").slice(0, 10))}</span>` : '<span class="sub">none published here</span>';
+  $("fwLatest").innerHTML = latest ? `${esc(latest.version)} <span class="sub">${esc((latest.built || "").slice(0, 10))}</span>`
+    : `<span class="sub">none published here for ${esc(dongleBoard())}</span>`;
   const can = !!otaStatus?.can;
   $("fwNoSlot").hidden = !(otaStatus && !otaStatus.can);
   $("fwFullLink").hidden = !latest;
   if (latest && latest.full && latest.full.file) {
-    $("fwFullLink").href = "firmware/" + latest.full.file;
+    $("fwFullLink").href = latestBase + latest.full.file;
     $("fwFullLink").textContent = latest.full.file;
   }
   const busy = !!ota;
@@ -1085,10 +1095,14 @@ function otaProgress(frac, text, cls) {
 
 /* What the image says about itself: esp_image_header_t (chip id at 12), then the first segment's
    esp_app_desc_t (magic at 32, version at 48, project name at 80). */
+const CHIP_IDS = { 0: "ESP32", 2: "ESP32-S2", 5: "ESP32-C3", 9: "ESP32-S3", 12: "ESP32-C2", 13: "ESP32-C6",
+                   16: "ESP32-H2", 18: "ESP32-P4", 20: "ESP32-C61", 23: "ESP32-C5" };
 function imageInfo(b) {
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
   if (b.length < 256 || b[0] !== 0xe9) return { err: "not an ESP32 app image" };
-  if (dv.getUint16(12, true) !== 18) return { err: "built for another chip than the ESP32-P4" };
+  const chip = CHIP_IDS[dv.getUint16(12, true)] || "an unknown chip";
+  const ours = ((info && info.chip) || "ESP32-P4").split(" ")[0];
+  if (chip !== ours) return { err: `built for ${chip}, and this dongle is an ${ours}` };
   if (dv.getUint32(32, true) !== 0xabcd5432) return { err: "no app description in the image (a merged full-flash image? use the app .bin)" };
   const str = (o) => new TextDecoder().decode(b.subarray(o, o + 32)).replace(/\0.*$/s, "");
   return { version: str(48), project: str(80) };
@@ -1098,7 +1112,8 @@ async function installBytes(bytes, label) {
   if (!link || ota) return;
   const im = imageInfo(bytes);
   if (im.err) { toast("Can't install " + label + ": " + im.err); return; }
-  if (info?.project && im.project !== info.project) { toast(`Can't install ${label}: it is "${im.project}", not a Stadiacast dongle build`); return; }
+  // Each board's build has its own project name, so this also catches another board's firmware.
+  if (info?.project && im.project !== info.project) { toast(`Can't install ${label}: it is "${im.project}", not a Stadiacast dongle build for this board (${dongleBoard()})`); return; }
   if (!confirm(`Install ${im.version} (${fmtBytes(bytes.length)}) on the dongle?\n\nIt restarts when done. Keep it plugged in until the console reconnects.`)) return;
   const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((x) => x.toString(16).padStart(2, "0")).join("");
   ota = { bytes, version: im.version, sent: 0, acked: 0, win: 0, raw: false, pumping: false, t0: performance.now() };
@@ -1194,7 +1209,7 @@ $("fwInstall").onclick = async () => {
   try {
     $("fwInstall").disabled = true;
     otaProgress(0, "Downloading " + latest.version + "…");
-    const r = await fetch("firmware/" + latest.app.file, { cache: "no-store" });
+    const r = await fetch(latestBase + latest.app.file, { cache: "no-store" });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const bytes = new Uint8Array(await r.arrayBuffer());
     $("fwProgress").hidden = true;
@@ -1255,7 +1270,7 @@ function demoLink() {
       const [cmd, k, v] = line.split(" ");
       if (cmd === "ota" && k === "begin") { img = { size: +v, at: 0 }; emit({ t: "ota", state: "erasing" }); setTimeout(() => emit({ t: "ota", state: "ready", win: 16384 }), 1200); }
       else if (cmd === "ota") sendOta();
-      else if (cmd === "hello") { emit({ t: "info", fw, project: "stadiacast_dongle", built: "Nov 15 2026 18:00:00", idf: "v5.5.1", chip: "ESP32-P4 rev v1.3", cores: 2, mac: "00:00:00:00:00:00", ssid: "stadiacast-dongle", channel: 6, audio: true, modes: MODES }); sendSettings(); }
+      else if (cmd === "hello") { emit({ t: "info", fw, project: "stadiacast_dongle", board: "firebeetle2-esp32p4", built: "Nov 15 2026 18:00:00", idf: "v5.5.1", chip: "ESP32-P4 rev v1.3", cores: 2, mac: "00:00:00:00:00:00", ssid: "stadiacast-dongle", channel: 6, audio: true, modes: MODES }); sendSettings(); }
       else if (cmd === "get") sendSettings();
       else if (cmd === "set") { const n = +v; if (k === "mode") st.mode = n; else if (k === "gain") st.gain = n; else if (k === "complexity") st.complexity = n; else if (k === "mic_complexity") st.mic_complexity = n; else if (k === "bitrate") st.bitrate = n; else if (k === "mic") st.mic = !!n; else if (k === "ptt") st.ptt = !!n; else if (k === "mic_gain") st.mic_gain = n; else if (k === "mic_gain_builtin") st.mic_gain_builtin = n; else if (k === "rumble") { st.rumble = !!n; if (!n) { clearTimeout(rmbTimer); rmbOut(0, 0, false); } } else if (k === "rumble_left") st.rumble_left = n; else if (k === "rumble_right") st.rumble_right = n; else if (k === "players") st.players = n; emit({ t: "ok", key: k, restart: k === "players" && n !== st.players_running }); sendSettings(); }
       else if (cmd === "rumble") {
