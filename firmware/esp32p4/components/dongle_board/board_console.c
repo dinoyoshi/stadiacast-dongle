@@ -93,7 +93,8 @@ void board_info(board_info_t *out)
     esp_chip_info(&chip);
     *out = (board_info_t){
         .fw = app->version,
-        .project = app->project_name,
+        .project = app->project_name, /* "stadiacast_dongle": this board's alone */
+        .board = "firebeetle2-esp32p4", /* as BOARD in .github/workflows/firmware-build.yml */
         .date = app->date,
         .time = app->time,
         .sdk = app->idf_ver,

@@ -6,8 +6,9 @@
 #   stadiacast-dongle-<board>.bin       the app image, for the web console's "Install a .bin file"
 #   firmware-<board>.json, SHA256SUMS   board, version, commit, ESP-IDF, sizes and checksums
 # <board> is firebeetle2-esp32p4 for now; each board's build will add its own files.
-# A tag with a hyphen (v1.1.0-rc1) makes a pre-release. Running it again for the same tag replaces
-# the files and keeps the notes.
+# A tag with a hyphen (v1.1.0-rc1) makes a pre-release. A full release then redeploys GitHub Pages,
+# so the web console's "Install latest" offers it (a pre-release doesn't). Running it again for the
+# same tag replaces the files and keeps the notes.
 #   git tag -a v1.0.0 -m "v1.0.0" && git push origin v1.0.0
 name: Release
 
@@ -33,6 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write # to start the Pages deploy
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -100,3 +102,11 @@ jobs:
             gh release create "$TAG" $files $pre --verify-tag --title "$TAG" \
               --notes-file notes.md --generate-notes
           fi
+      # A release made with this workflow's token starts no other workflow by itself (GitHub's
+      # rule), so start the Pages deploy here, now that the release has its files.
+      - name: GitHub Pages
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run console-pages.yml --ref main

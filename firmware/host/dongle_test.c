@@ -204,7 +204,7 @@ void board_console_set_raw(board_console_raw_cb_t cb)
 }
 void board_info(board_info_t *out)
 {
-    *out = (board_info_t){.fw = "test", .project = "stadiacast_dongle", .date = "Nov 16 2026", .time = "10:00:00",
+    *out = (board_info_t){.fw = "test", .project = "stadiacast_dongle", .board = "host", .date = "Nov 16 2026", .time = "10:00:00",
                           .sdk = "host", .cores = 2, .mac = {1, 2, 3, 4, 5, 6}, .ssid = "stadiacast-dongle",
                           .channel = 6};
     strcpy(out->chip, "Linux host");
@@ -501,7 +501,7 @@ static void test_console(void)
 
     size_t m = mark();
     say("hello");
-    CHECK(heard(m, "{\"t\":\"info\",\"fw\":\"test\",\"project\":\"stadiacast_dongle\",\"built\":\"Nov 16 2026 10:00:00\","
+    CHECK(heard(m, "{\"t\":\"info\",\"fw\":\"test\",\"project\":\"stadiacast_dongle\",\"board\":\"host\",\"built\":\"Nov 16 2026 10:00:00\","
                    "\"idf\":\"host\",\"chip\":\"Linux host\",\"cores\":2,\"mac\":\"01:02:03:04:05:06\","
                    "\"ssid\":\"stadiacast-dongle\",\"channel\":6,\"audio\":true,"
                    "\"modes\":[\"Xbox 360\",\"DualShock 4\",\"Switch Pro\",\"HID gamepad\",\"Stadia\"]}\n", 1000),

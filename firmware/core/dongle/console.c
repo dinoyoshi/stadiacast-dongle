@@ -5,7 +5,7 @@
  * CPU load, tasks, memory, the hotspot's signal) comes from dongle_board.h.
  *
  * To the host, one line each, only while the host has the port open:
- *   {"t":"info",...}      firmware, chip, hotspot; after "hello"
+ *   {"t":"info",...}      firmware, board, chip, hotspot; after "hello"
  *   {"t":"settings",...}  the settings; after "hello", "get" and every change
  *   {"t":"stats",...}     once a second: the controller session (with its battery and the link
  *                         quality: keepalive round trip, input series lost), headset audio,
@@ -187,10 +187,10 @@ static void send_info(void)
     board_info_t b;
     board_info(&b);
     const uint8_t *mac = b.mac;
-    sendf("{\"t\":\"info\",\"fw\":\"%s\",\"project\":\"%s\",\"built\":\"%s %s\",\"idf\":\"%s\",\"chip\":\"%s\","
+    sendf("{\"t\":\"info\",\"fw\":\"%s\",\"project\":\"%s\",\"board\":\"%s\",\"built\":\"%s %s\",\"idf\":\"%s\",\"chip\":\"%s\","
           "\"cores\":%d,\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"ssid\":\"%s\",\"channel\":%d,"
           "\"audio\":%s,\"modes\":[\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"]}",
-          b.fw, b.project, b.date, b.time, b.sdk, b.chip, b.cores, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+          b.fw, b.project, b.board ? b.board : "", b.date, b.time, b.sdk, b.chip, b.cores, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
           b.ssid, b.channel, K.build->audio ? "true" : "false", pad_mode_info(USB_PAD_XINPUT)->name,
           pad_mode_info(USB_PAD_DS4)->name, pad_mode_info(USB_PAD_SWITCH)->name, pad_mode_info(USB_PAD_HID)->name,
           pad_mode_info(USB_PAD_STADIA)->name);

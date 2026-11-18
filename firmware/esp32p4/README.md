@@ -68,8 +68,8 @@ component registry. An existing `sdkconfig` from an old checkout may predate the
 table or newer settings (such as TLS buffers in PSRAM); delete it and let `sdkconfig.defaults`
 apply.
 
-**Without installing ESP-IDF**, flash the whole-flash image that CI publishes with the web
-console, [stadiacast-dongle-firebeetle2-esp32p4-full.bin](https://dinoyoshi.github.io/stadiacast-dongle/firmware/stadiacast-dongle-firebeetle2-esp32p4-full.bin)
+**Without installing ESP-IDF**, flash the whole-flash image of the latest release, published with
+the web console, [stadiacast-dongle-firebeetle2-esp32p4-full.bin](https://dinoyoshi.github.io/stadiacast-dongle/firmware/stadiacast-dongle-firebeetle2-esp32p4-full.bin)
 (or one you made with `idf.py merge-bin`), at offset 0 over the programming port:
 `esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle-firebeetle2-esp32p4-full.bin`, or in the browser with
 [ESP Web Tool](https://espressif.github.io/esptool-js/) (address 0x0, Chrome or Edge). Each
@@ -287,10 +287,14 @@ been picked in the Connect dialog once.
 The **Update firmware** card installs new firmware over the same USB cable: no ESP-IDF, no
 esptool, no BOOT button.
 
-- **Install latest** takes the build that CI publishes next to the page
-  (`firmware/stadiacast-dongle-firebeetle2-esp32p4.bin`, built from `main` with ESP-IDF 5.5.6 and the defaults in
-  `sdkconfig.defaults`). The card shows which version runs and which is published.
-- **Install a .bin file** takes your own build: `build/stadiacast_dongle.bin` (the app image,
+- **Install latest** takes the latest [release](https://github.com/dinoyoshi/stadiacast-dongle/releases)
+  (not a pre-release) for the board the dongle reports, which is published next to the page
+  (`firmware/firebeetle2-esp32p4/stadiacast-dongle-firebeetle2-esp32p4.bin`, built by CI with ESP-IDF 5.5.6 and the
+  defaults in `sdkconfig.defaults`). The card shows which version runs and which is the latest.
+- **Install a .bin file** takes any other app image: a release's or pre-release's
+  `stadiacast-dongle-firebeetle2-esp32p4.bin`, the build of `main` from
+  [firmware/firebeetle2-esp32p4/dev/](https://dinoyoshi.github.io/stadiacast-dongle/firmware/firebeetle2-esp32p4/dev/stadiacast-dongle-firebeetle2-esp32p4.bin)
+  (newer than the release, less tested), or your own `build/stadiacast_dongle.bin` (the app image,
   not the merged full-flash one).
 
 It takes about half a minute. The image goes to the slot that isn't running, and the dongle only
@@ -313,9 +317,11 @@ The same port works from a terminal (`screen /dev/ttyACM0`): type `hello`, `get`
 at the top of `../core/dongle/console.c` (and the firmware update's at the top of `../core/dongle/ota.c`).
 
 GitHub Pages: in the repository's Settings → Pages, set Source to "GitHub Actions". The
-`Web console and firmware (GitHub Pages)` workflow then builds the firmware and publishes it with
-`console/` on every change under `firmware/esp32p4/`, `firmware/core/` or `firmware/platform/` on
-`main` (pull requests only build it).
+`Web console and firmware (GitHub Pages)` workflow then publishes `console/` with the latest
+release's firmware for each board in `firmware/<board>/` and the build of `main` in
+`firmware/<board>/dev/`, on every change under
+`firmware/esp32p4/`, `firmware/core/` or `firmware/platform/` on `main` and whenever a release is
+published (pull requests only build the firmware).
 
 ## Known limits
 

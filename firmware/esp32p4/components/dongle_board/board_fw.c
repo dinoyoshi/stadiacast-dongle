@@ -74,7 +74,7 @@ const char *board_fw_finish(char version[33])
     if (esp_ota_get_partition_description(s_part, &desc) != ESP_OK) return "no app description in the image";
     const esp_app_desc_t *self = esp_app_get_description();
     if (strncmp(desc.project_name, self->project_name, sizeof(desc.project_name))) {
-        snprintf(s_err, sizeof(s_err), "not a Stadiacast dongle image (it is %.32s)", desc.project_name);
+        snprintf(s_err, sizeof(s_err), "not a Stadiacast dongle image for this board (it is %.32s)", desc.project_name);
         return s_err;
     }
     err = esp_ota_set_boot_partition(s_part);

@@ -81,6 +81,13 @@ example for each piece. A new board needs:
    - board info and stats (chip, CPU, heap, the task list JSON), and restart,
    - two firmware slots for updates, or `board_fw_begin()` returning an error.
 
+   **A board id** in `board_info()` (`board`, for example `firebeetle2-esp32p4`:
+   `<maker-board>-<chip>`), the same as in its firmware's file names. The web console's Install
+   latest takes the build from `firmware/<board>/` on GitHub Pages by it. And **a project name of
+   its own** for the firmware image (the ESP32-P4's is `stadiacast_dongle`): an update is refused
+   unless the new image has the running one's project name, so one board can't be given
+   another's firmware, even on the same chip.
+
    On ESP-IDF it is a component named `dongle_board` (the ESP32-P4's is
    `esp32p4/components/dongle_board`), because the core's components link against that name.
 3. **A Wi-Fi access point** the controller joins, with the board at a fixed address
