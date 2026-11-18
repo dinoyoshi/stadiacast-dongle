@@ -67,9 +67,9 @@ table or newer settings (such as TLS buffers in PSRAM); delete it and let `sdkco
 apply.
 
 **Without installing ESP-IDF**, flash the whole-flash image that CI publishes with the web
-console, [stadiacast-dongle-full.bin](https://dinoyoshi.github.io/stadiacast-dongle/firmware/stadiacast-dongle-full.bin)
+console, [stadiacast-dongle-firebeetle2-esp32p4-full.bin](https://dinoyoshi.github.io/stadiacast-dongle/firmware/stadiacast-dongle-firebeetle2-esp32p4-full.bin)
 (or one you made with `idf.py merge-bin`), at offset 0 over the programming port:
-`esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle-full.bin`, or in the browser with
+`esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle-firebeetle2-esp32p4-full.bin`, or in the browser with
 [ESP Web Tool](https://espressif.github.io/esptool-js/) (address 0x0, Chrome or Edge). Each
 [release](https://github.com/dinoyoshi/stadiacast-dongle/releases) has the same two files for a
 tagged version, with their checksums. After
@@ -273,7 +273,7 @@ The **Update firmware** card installs new firmware over the same USB cable: no E
 esptool, no BOOT button.
 
 - **Install latest** takes the build that CI publishes next to the page
-  (`firmware/stadiacast-dongle.bin`, built from `main` with ESP-IDF 5.5.6 and the defaults in
+  (`firmware/stadiacast-dongle-firebeetle2-esp32p4.bin`, built from `main` with ESP-IDF 5.5.6 and the defaults in
   `sdkconfig.defaults`). The card shows which version runs and which is published.
 - **Install a .bin file** takes your own build: `build/stadiacast_dongle.bin` (the app image,
   not the merged full-flash one).
