@@ -49,7 +49,8 @@ typedef struct {
     void (*reset)(void);     /* the host went away: back to the state at plug-in; NULL: nothing */
 } pad_mode_t;
 
-extern const pad_mode_t pad_mode_xinput, pad_mode_ds4, pad_mode_switch, pad_mode_hid;
+extern const pad_mode_t pad_mode_xinput, pad_mode_ds4, pad_mode_switch, pad_mode_hid,
+    pad_mode_stadia;
 
 /* An output report from the host (interrupt OUT or SET_REPORT), data[0] being its report ID. */
 void pad_output(usb_pad_mode_t mode, const usb_pad_state_t *st, const uint8_t *data, size_t len, pad_output_t *out);

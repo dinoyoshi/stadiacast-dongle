@@ -14,6 +14,7 @@ static const pad_mode_t *const s_modes[USB_PAD_MODE_COUNT] = {
     [USB_PAD_DS4] = &pad_mode_ds4,
     [USB_PAD_SWITCH] = &pad_mode_switch,
     [USB_PAD_HID] = &pad_mode_hid,
+    [USB_PAD_STADIA] = &pad_mode_stadia,
 };
 
 static const pad_mode_t *mode_of(usb_pad_mode_t mode)

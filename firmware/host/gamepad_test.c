@@ -19,6 +19,7 @@ static const uint32_t s_expect[USB_PAD_MODE_COUNT] = {
     [USB_PAD_DS4] = 0x1794DD06,
     [USB_PAD_SWITCH] = 0xA12C8871,
     [USB_PAD_HID] = 0x5783D241,
+    [USB_PAD_STADIA] = 0x3FD29B74,
 };
 
 static uint32_t s_rng = 12345;

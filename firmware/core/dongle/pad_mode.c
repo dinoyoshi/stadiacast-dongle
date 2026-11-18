@@ -1,13 +1,14 @@
 /*
- * Picking the gamepad mode from the controller: hold the Stadia button with a face button for
- * 1.5 s (a 4 s hold of the Stadia button turns the controller off). The board leaves USB and
- * comes back as the new kind of controller, remembers it (NVS) for the next power-up, and
- * pulses the controller's motors once per mode number:
- *   Stadia + A   Xbox 360      (1 pulse)
- *   Stadia + B   DualShock 4   (2 pulses)
- *   Stadia + X   Switch Pro    (3 pulses)
- *   Stadia + Y   HID gamepad   (4 pulses)
- * While the Stadia button is held with a face button, neither goes to the host.
+ * Picking the gamepad mode from the controller: hold the Stadia button with a face button (or
+ * Capture) for 1.5 s (a 4 s hold of the Stadia button turns the controller off). The board
+ * leaves USB and comes back as the new kind of controller, remembers it (NVS) for the next
+ * power-up, and pulses the controller's motors once per mode number:
+ *   Stadia + A         Xbox 360      (1 pulse)
+ *   Stadia + B         DualShock 4   (2 pulses)
+ *   Stadia + X         Switch Pro    (3 pulses)
+ *   Stadia + Y         HID gamepad   (4 pulses)
+ *   Stadia + Capture   Stadia        (5 pulses)
+ * While the Stadia button is held with a face button or Capture, neither goes to the host.
  * A press of the board's button (BOOT, GPIO35, on the FireBeetle 2 ESP32-P4) steps to the next
  * mode, controller or not. The board's LED blinks the mode number either way.
  */
@@ -98,18 +99,22 @@ void pad_mode_start(void)
 void pad_mode_filter(usb_pad_state_t *st)
 {
     uint16_t face = st->buttons & FACE;
-    if (!(st->buttons & USB_PAD_GUIDE) || !face) {
+    bool capture = st->extra & USB_PAD_CAPTURE;
+    if (!(st->buttons & USB_PAD_GUIDE) || (!face && !capture)) {
         M.since = 0;
         M.latched = false;
         return;
     }
     st->buttons &= (uint16_t)~(USB_PAD_GUIDE | FACE); /* the combo is ours */
-    usb_pad_mode_t want = face == USB_PAD_A   ? USB_PAD_XINPUT
+    st->extra &= (uint8_t)~USB_PAD_CAPTURE;
+    usb_pad_mode_t want = face && capture ? USB_PAD_MODE_COUNT
+                          : capture       ? USB_PAD_STADIA
+                          : face == USB_PAD_A ? USB_PAD_XINPUT
                           : face == USB_PAD_B ? USB_PAD_DS4
                           : face == USB_PAD_X ? USB_PAD_SWITCH
                           : face == USB_PAD_Y ? USB_PAD_HID
                                               : USB_PAD_MODE_COUNT;
-    if (want == USB_PAD_MODE_COUNT) { /* two face buttons: not a combo */
+    if (want == USB_PAD_MODE_COUNT) { /* two buttons: not a combo */
         M.since = 0;
         return;
     }

@@ -16,6 +16,7 @@ typedef enum {
     USB_PAD_DS4,
     USB_PAD_SWITCH,
     USB_PAD_HID,
+    USB_PAD_STADIA,
     USB_PAD_MODE_COUNT,
 } usb_pad_mode_t;
 

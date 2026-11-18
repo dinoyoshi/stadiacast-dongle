@@ -18,6 +18,7 @@ OTG port, as four kinds of controller, on Linux and Windows.
 | Headset audio (USB headphones to the 3.5 mm jack) | done | Linux (PipeWire); Windows in Xbox 360, DS4 and HID modes |
 | Standalone: power from the OTG port, LED status, link timeout | done | board |
 | Controller modes: Xbox 360, DualShock 4, Switch Pro, HID | done | Linux; Steam sees DS4 as a PS4 controller |
+| Stadia mode (a wired Stadia Controller, 18D1:9400) | done | host build; board test pending |
 | C6 ESP-Hosted update from the P4 | done | board: 2.12.11 to 2.13.1 |
 | Headset microphone (the controller's headset as the PC's USB microphone) | done | Linux (PipeWire): voice recorded, no clipping, 0 packets lost |
 | Push to talk on the Assistant button | done | board: sound 15-50 ms after the press, stops 0.3 s after release; headphone underruns about 0 per 10 s while the mic is idle |
@@ -72,6 +73,7 @@ firmware moved to this repository on 2026-11-16, with its history.
 | [#2](https://github.com/dinoyoshi/stadiacast-dongle/pull/2) (this repository) | Notes for AI coding agents | `AGENTS.md` at the root (layout, build and host-test commands, the rules learned the hard way, a progress row per PR), `CLAUDE.md` pointing to it, and a `port-board` skill (`.claude/skills/port-board/SKILL.md`): a step-by-step porting checklist built on firmware/README.md's "Adding a board", ending with the host tests passing and the new board building in CI. Docs only |
 | [#3](https://github.com/dinoyoshi/stadiacast-dongle/pull/3) (this repository) | Releases, troubleshooting, issue forms, CONTRIBUTING | `release.yml`: pushing a tag `v*` builds the firmware at that commit (the same build as Pages, now shared as `firmware-build.yml`, with the tag as the app's version) and publishes a GitHub release with `stadiacast-dongle-full.bin`, `stadiacast-dongle.bin`, `firmware.json` and `SHA256SUMS` plus short notes. [docs/troubleshooting.md](troubleshooting.md) (LED patterns, the two USB-C ports, the controller not joining, no gamepad, no headset sound, the mic, Linux serial permissions, the console, updates), linked from both READMEs. GitHub issue forms: bug report (version, board, system, mode, LED, console log) and "Tested on my setup". `CONTRIBUTING.md` (build, host tests, progress row, releases). Photo placeholders and a shot list in `docs/img/`. Docs and CI only; the Pages build checked on the PR, the release workflow runs on the first tag |
 | [#4](https://github.com/dinoyoshi/stadiacast-dongle/pull/4) (this repository) | The board's name in the firmware file names | CI's files are now `stadiacast-dongle-firebeetle2-esp32p4.bin` and `-full.bin`, and `firmware.json` gains `"board"`, so other boards' builds can sit next to them in a release (`firmware-<board>.json`, one `SHA256SUMS`). The console takes the file names from `firmware.json`; GitHub Pages keeps copies under the old names for older links. v1.0.0 (2026-11-18) still has the old names. CI only; checked on the PR build |
+| [#6](https://github.com/dinoyoshi/stadiacast-dongle/pull/6) (this repository) | Stadia mode: a wired Stadia Controller for Linux's own driver | A fifth gamepad mode, `core/gamepad/mode_stadia.c`: Google 18D1:9400 (bcdDevice 1.11, as SDL's database has it on Linux) with the controller's own HID layout, input report 3 (hat, 15 buttons, sticks 1..255 centred on 128, brake/accelerator triggers) and rumble output report 5 (two 16-bit levels), so the kernel's `hid-google-stadiaff` gives force feedback and SDL and Steam use their Stadia drivers. Headphones, mic and up to 4 players work as in Xbox 360 mode. Stadia + Capture (5 pulses), `set mode 4`, the console's mode list and port filter, `DONGLE_PAD_MODE` 0-4. Layout checked against SDL's Stadia driver and its Linux evdev mapping; host tests (new hash, the Capture combo in `dongle_test`); board test pending |
 
 ## Things we learned the hard way
 
@@ -109,6 +111,7 @@ firmware moved to this repository on 2026-11-16, with its history.
   tested with it).
 - The Opus bitrate setting has not had a listening test.
 - DualShock 4 and Switch Pro rumble, and Switch Pro mode on a real Switch, are untested.
+- Stadia mode is untested on the board (input in SDL/Steam/evdev, rumble through `hid-google-stadiaff`).
 
 ## Next
 

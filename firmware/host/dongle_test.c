@@ -332,17 +332,25 @@ static void test_input(void)
     CHECK(!st.buttons && !st.extra && !st.lx && !st.rt, "a disconnect releases everything");
 }
 
-static void hold(uint16_t buttons, int ms)
+static void hold_extra(uint16_t buttons, uint8_t extra, int ms)
 {
     for (int t = 0; t < ms; t += 50) { /* the controller sends changes only, but sending more is fine */
-        usb_pad_state_t st = {.buttons = buttons, .lx = 100};
+        usb_pad_state_t st = {.buttons = buttons, .extra = extra, .lx = 100};
         pad_mode_filter(&st);
+        if (buttons == USB_PAD_GUIDE && extra == USB_PAD_CAPTURE) {
+            CHECK(st.buttons == 0 && st.extra == 0 && st.lx == 100, "Stadia + Capture stays off the host");
+        }
         if (buttons & USB_PAD_GUIDE && buttons & (USB_PAD_A | USB_PAD_B | USB_PAD_X | USB_PAD_Y)) {
             int faces = __builtin_popcount(buttons & (USB_PAD_A | USB_PAD_B | USB_PAD_X | USB_PAD_Y));
             if (faces == 1) CHECK(st.buttons == 0 && st.lx == 100, "the combo stays off the host");
         }
         port_sleep_ms(50);
     }
+}
+
+static void hold(uint16_t buttons, int ms)
+{
+    hold_extra(buttons, 0, ms);
 }
 
 static void test_modes(void)
@@ -369,6 +377,12 @@ static void test_modes(void)
     CHECK(pad_mode_request(USB_PAD_HID), "console request taken");
     port_sleep_ms(2500);
     CHECK(s_mode == USB_PAD_HID, "console request");
+    hold_extra(USB_PAD_GUIDE | USB_PAD_A, USB_PAD_CAPTURE, 2000);
+    CHECK(s_mode == USB_PAD_HID, "a face button with Capture is no combo");
+    hold_extra(USB_PAD_GUIDE, USB_PAD_CAPTURE, 1800);
+    hold(0, 100);
+    port_sleep_ms(2500);
+    CHECK(s_mode == USB_PAD_STADIA, "Stadia + Capture held 1.8 s: Stadia (now %d)", (int)s_mode);
     CHECK(s_led_changes > 0, "the LED blinked the mode");
 }
 
@@ -484,7 +498,7 @@ static void test_console(void)
     CHECK(heard(m, "{\"t\":\"info\",\"fw\":\"test\",\"project\":\"stadiacast_dongle\",\"built\":\"Nov 16 2026 10:00:00\","
                    "\"idf\":\"host\",\"chip\":\"Linux host\",\"cores\":2,\"mac\":\"01:02:03:04:05:06\","
                    "\"ssid\":\"stadiacast-dongle\",\"channel\":6,\"audio\":true,"
-                   "\"modes\":[\"Xbox 360\",\"DualShock 4\",\"Switch Pro\",\"HID gamepad\"]}\n", 1000),
+                   "\"modes\":[\"Xbox 360\",\"DualShock 4\",\"Switch Pro\",\"HID gamepad\",\"Stadia\"]}\n", 1000),
           "info line");
     CHECK(heard(m, "{\"t\":\"settings\",\"mode\":", 1000), "settings line");
     CHECK(heard(m, "{\"t\":\"ota\",\"state\":\"idle\",\"can\":true,\"running\":\"ota_0\",\"next\":\"ota_1\",\"slot\":262144,\"trial\":false}", 1000),

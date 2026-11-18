@@ -90,12 +90,16 @@ The console's log (or the serial log) shows how far the controller got: joining 
 - The LED has to be steady: the gamepad sends neutral input until a controller is connected.
 - **Pick the mode for your system.** Xbox 360 (Stadia + A) for Windows, Linux, SteamOS and
   Android; DualShock 4 (Stadia + B) for PlayStation prompts on a PC; Switch Pro (Stadia + X)
-  for a Switch; HID (Stadia + Y) for macOS. Hold the combo **1.5 s**, not 4 s (that turns the
+  for a Switch; HID (Stadia + Y) for macOS; Stadia (Stadia + Capture) for Linux's own Stadia
+  support. Hold the combo **1.5 s**, not 4 s (that turns the
   controller off). The BOOT button also steps through the modes.
 - **Nintendo Switch:** turn on *System Settings → Controllers and Sensors → Pro Controller Wired
   Communication*, and use Switch Pro mode.
 - **Steam** shows Xbox 360 mode with the headset on as a generic "Xbox Pad". That is expected:
   the dongle uses another USB ID then so that Windows' Xbox driver doesn't take the headset too.
+- **Stadia mode has no rumble on Linux:** the kernel needs `CONFIG_HID_GOOGLE_STADIA_FF`
+  (kernel 5.11 or later; `modinfo hid-google-stadiaff` says whether it is there). SDL and
+  Steam games rumble without it.
 - **A real PS4** doesn't accept DualShock 4 mode (it checks for Sony hardware).
 
 ## No sound in the headset
