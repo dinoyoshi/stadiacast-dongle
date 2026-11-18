@@ -1,9 +1,11 @@
 # A GitHub release for each version tag: push a tag such as v1.0.0 on main and this builds the
 # firmware at that commit (the same build as GitHub Pages, firmware-build.yml, with the tag as the
 # app's version) and publishes it as a release with short notes:
-#   stadiacast-dongle-full.bin  the whole flash, for a first install at 0x0 over the programming port
-#   stadiacast-dongle.bin       the app image, for the web console's "Install a .bin file"
-#   firmware.json, SHA256SUMS   version, commit, ESP-IDF, sizes and checksums
+#   stadiacast-dongle-<board>-full.bin  the whole flash, for a first install at 0x0 over the
+#                                       programming port
+#   stadiacast-dongle-<board>.bin       the app image, for the web console's "Install a .bin file"
+#   firmware-<board>.json, SHA256SUMS   board, version, commit, ESP-IDF, sizes and checksums
+# <board> is firebeetle2-esp32p4 for now; each board's build will add its own files.
 # A tag with a hyphen (v1.1.0-rc1) makes a pre-release. Running it again for the same tag replaces
 # the files and keeps the notes.
 #   git tag -a v1.0.0 -m "v1.0.0" && git push origin v1.0.0
@@ -42,10 +44,14 @@ jobs:
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
-          sha256sum stadiacast-dongle-full.bin stadiacast-dongle.bin > SHA256SUMS
+          board="$(python3 -c 'import json; print(json.load(open("firmware.json"))["board"])')"
+          mv firmware.json "firmware-$board.json"
+          sha256sum stadiacast-dongle-*.bin > SHA256SUMS
+          export BOARD="$board"
           python3 - <<'PY'
           import json, os
-          fw = json.load(open("firmware.json"))
+          fw = json.load(open(f"firmware-{os.environ['BOARD']}.json"))
+          full, app = fw["full"]["file"], fw["app"]["file"]
           tag, repo = os.environ["TAG"], os.environ["REPO"]
           pages = "https://dinoyoshi.github.io/stadiacast-dongle/"
           guide = f"https://github.com/{repo}/blob/{tag}/firmware/esp32p4/README.md"
@@ -56,13 +62,13 @@ jobs:
               f"Firmware for the **DFRobot FireBeetle 2 ESP32-P4**, version `{fw['version']}` "
               f"(commit `{fw['commit'][:7]}`, ESP-IDF {idf}, built {fw['built']}).",
               "",
-              "**First install:** write `stadiacast-dongle-full.bin` at address `0x0` over the board's "
+              f"**First install:** write `{full}` at address `0x0` over the board's "
               "programming USB-C port, with [ESP Web Tool](https://espressif.github.io/esptool-js/) "
-              "or `esptool --chip esp32p4 write_flash 0x0 stadiacast-dongle-full.bin`. Then use the "
+              f"or `esptool --chip esp32p4 write_flash 0x0 {full}`. Then use the "
               "other port (high-speed OTG) and the [web console](" + pages + ").",
               "",
               "**Already running the dongle:** in the web console's Update firmware card, "
-              "**Install a .bin file** and pick `stadiacast-dongle.bin`. It rolls back by itself if "
+              f"**Install a .bin file** and pick `{app}`. It rolls back by itself if "
               "the new firmware doesn't start.",
               "",
               "Built for the FireBeetle's v1.x P4 chip. What was tested on hardware is in "
@@ -85,7 +91,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          files="stadiacast-dongle-full.bin stadiacast-dongle.bin firmware.json SHA256SUMS"
+          files="$(ls stadiacast-dongle-*.bin firmware-*.json) SHA256SUMS"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" $files --clobber
           else

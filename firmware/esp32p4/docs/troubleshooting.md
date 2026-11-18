@@ -159,7 +159,7 @@ The dongle keeps the old firmware if anything goes wrong, so it's safe to try ag
 - The new firmware is kept once the computer has the dongle's USB up for 10 s. If it restarted
   before that, or its servers didn't start, it went back to the old one by itself. The card
   says which version runs.
-- **Install a .bin file** wants the app image (`stadiacast-dongle.bin`, or
+- **Install a .bin file** wants the app image (`stadiacast-dongle-firebeetle2-esp32p4.bin`, or
   `build/stadiacast_dongle.bin`), not the full-flash one.
 - Firmware from before web console updates has one app slot: flash the full image over the
   programming port once ([Build and flash](../README.md#build-and-flash)).

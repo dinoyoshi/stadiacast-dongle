@@ -1,7 +1,9 @@
 # Builds the FireBeetle 2 ESP32-P4 firmware (firmware/esp32p4) with ESP-IDF 5.5.6 and uploads it as
-# the artifact `firmware`: stadiacast-dongle.bin (the app image, for the web console's updates),
-# stadiacast-dongle-full.bin (the whole flash, for a first install at 0x0 over the programming
-# port) and firmware.json (version, commit, sizes, SHA-256).
+# the artifact `firmware`. File names carry the board, as other boards will have their own builds:
+#   stadiacast-dongle-firebeetle2-esp32p4.bin       the app image, for the web console's updates
+#   stadiacast-dongle-firebeetle2-esp32p4-full.bin  the whole flash, for a first install at 0x0
+#                                                   over the programming port
+#   firmware.json                                   board, version, commit, file names, sizes, SHA-256
 # Called by console-pages.yml (pull requests and main, for GitHub Pages) and release.yml (tags).
 name: Firmware build
 
@@ -25,6 +27,8 @@ jobs:
     # build failed on the board in mbedtls_ecp_gen_key (-0x4d00, ECP random failed), so the
     # DTLS certificate and the controller's servers never came up.
     container: espressif/idf:v5.5.6
+    env:
+      BOARD: firebeetle2-esp32p4 # in the file names and firmware.json
     defaults:
       run:
         shell: bash
@@ -76,22 +80,24 @@ jobs:
       - name: collect
         run: |
           mkdir -p "$GITHUB_WORKSPACE/out"
-          cp build/stadiacast_dongle.bin "$GITHUB_WORKSPACE/out/stadiacast-dongle.bin"
-          cp build/stadiacast-dongle-full.bin "$GITHUB_WORKSPACE/out/stadiacast-dongle-full.bin"
+          cp build/stadiacast_dongle.bin "$GITHUB_WORKSPACE/out/stadiacast-dongle-$BOARD.bin"
+          cp build/stadiacast-dongle-full.bin "$GITHUB_WORKSPACE/out/stadiacast-dongle-$BOARD-full.bin"
           cd "$GITHUB_WORKSPACE/out"
           python3 - <<'PY'
           import hashlib, json, os, datetime
           def f(name):
               d = open(name, "rb").read()
               return {"file": name, "size": len(d), "sha256": hashlib.sha256(d).hexdigest()}
+          board = os.environ["BOARD"]
           json.dump({
+              "board": board,
               "version": os.environ["VERSION"],
               "commit": os.environ["GITHUB_SHA"],
               "built": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"),
               "idf": os.environ.get("IDF", ""),
               "components": os.environ.get("COMPONENTS", ""),
-              "app": f("stadiacast-dongle.bin"),
-              "full": f("stadiacast-dongle-full.bin"),
+              "app": f(f"stadiacast-dongle-{board}.bin"),
+              "full": f(f"stadiacast-dongle-{board}-full.bin"),
           }, open("firmware.json", "w"), indent=1)
           PY
           cat firmware.json
