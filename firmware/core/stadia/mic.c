@@ -186,7 +186,7 @@ static void apply_gain(src_t *S, int16_t *pcm, int frames)
 {
     int db = M.gain_db[S->headset == 0];
     if (db != S->applied_db) {
-        char who[16] = "";
+        char who[32] = "";
         if (S != M.S) snprintf(who, sizeof(who), "player %d: ", (int)(S - M.S) + 1);
         SLOGI(TAG, "%sgain %+d dB (%s)", who, db, S->headset == 0 ? "built-in microphone, no headset" : "headset microphone");
         S->applied_db = db;
@@ -289,7 +289,7 @@ static void decode(const pkt_t *p, int16_t *pcm)
     /* one stream per player: the first link it came on, until that one goes quiet for a second */
     if (S->last_seq >= 0 && p->link != S->stream_link && now - S->last_pkt_ms < 1000) return;
     if (S->last_seq < 0 || p->link != S->stream_link || now - S->last_pkt_ms > 1000) {
-        char who[20] = "";
+        char who[32] = "";
         if (p->slot) snprintf(who, sizeof(who), "player %d's ", p->slot + 1);
         SLOGI(TAG, "%smicrophone stream on the %s link: PT %u, %u-byte packets, %d samples each", who,
               p->link ? "game" : "display", p->pt, p->len, opus_packet_get_nb_samples(p->data, p->len, RATE));
