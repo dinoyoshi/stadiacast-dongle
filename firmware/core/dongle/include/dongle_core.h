@@ -68,6 +68,8 @@ typedef struct {
     uint8_t kbps;       /* Opus bitrate, kbit/s (STADIA_AUDIO_KBPS_MIN..MAX) */
     bool mic;           /* ask the controller for its microphone (from the next start) */
     bool ptt;           /* push to talk */
+    int8_t mic_gain_db[2]; /* the microphone's gain, dB (STADIA_MIC_GAIN_MIN..MAX): [0] a headset
+                              in the controller's jack, [1] the controller's built-in mic */
     bool mic_running;   /* what this start does (mic as it was at power-up) */
     bool rumble;        /* rumble on/off */
     uint8_t rumble_pct[2]; /* strength per motor (left, right), 0..RUMBLE_PCT_MAX % */
@@ -82,7 +84,7 @@ typedef struct {
 } dongle_build_t;
 
 /* The saved settings (the defaults where none are saved). Before the USB device and
- * stadia_start: it also applies the gain and the rumble settings. */
+ * stadia_start: it also applies the gains and the rumble settings. */
 void settings_load(const dongle_build_t *build, dongle_settings_t *out);
 /* The headphones' gain as Q15 (32768 = 0 dB), for the audio task. */
 int32_t console_gain_q15(void);

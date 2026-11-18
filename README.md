@@ -21,7 +21,8 @@ computer see lives in a portable core, and each board only adds its own Wi-Fi, U
 - **Every button, stick and trigger**, with the game's **rumble** sent back to the controller.
 - **Headset audio**: plug headphones into the controller and pick the dongle as your sound
   output. The headset's **microphone** becomes the computer's microphone, with push to talk on
-  the Assistant button.
+  the Assistant button. With no headset, the controller's own built-in microphone is used. With several
+  controllers, every headset plays the same sound and every mic is mixed into one.
 - **Five controller types**, switched by holding Stadia + A, B, X, Y or Capture: Xbox 360 (the
   default), DualShock 4, Switch Pro, a plain HID gamepad, or a wired Stadia Controller for
   Linux's own Stadia support. The dongle remembers your choice.
@@ -58,6 +59,7 @@ only, ⚪ built but not tried yet, — not available.
 | Rumble | ✅ | 🧪 |
 | Headset audio (computer to controller) | ✅ | 🧪 |
 | Headset microphone (controller to computer) | ✅ | 🧪 |
+| Built-in microphone, with its own gain | ✅ heard; gain board test pending | 🧪 gain and limiter |
 | Four USB controller modes | ✅ | 🧪 (reports only) |
 | Several controllers at once | ✅ with one real controller; players 2 to 4 ⚪ | 🧪 two fake controllers |
 | Web console | ✅ | 🧪 (protocol only) |
@@ -85,6 +87,7 @@ What has been tried with a real controller and a real board, by the computer it 
 | Rumble | ✅ Xbox 360 mode (DS4, Switch Pro and Stadia ⚪) | ⚪ | — (HID mode has none) | ⚪ |
 | Headset audio | ✅ | ✅ Xbox 360, DS4 and HID modes | ⚪ | — |
 | Headset microphone | ✅ | ⚪ | ⚪ | — |
+| Built-in microphone | ✅ | ⚪ | ⚪ | — |
 | Web console (Chrome or Edge) | ✅ | ⚪ | ⚪ | — |
 
 Known rough edges: some loud songs clip a little in the headset (lowering the gain in the

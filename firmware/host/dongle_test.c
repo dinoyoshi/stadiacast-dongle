@@ -290,8 +290,13 @@ int stadia_get_players(stadia_player_t *out, int max)
     out->ping_us = -1;
     return 1;
 }
-static int s_complexity, s_kbps;
+static int s_complexity, s_kbps, s_mic_gain[2] = {99, 99};
 static bool s_ptt;
+void stadia_mic_set_gain(int headset_db, int builtin_db)
+{
+    s_mic_gain[0] = headset_db;
+    s_mic_gain[1] = builtin_db;
+}
 void stadia_audio_set_complexity(int c)
 {
     s_complexity = c;
@@ -456,7 +461,7 @@ static const dongle_build_t s_build = {
     .audio = true,
     .mic_available = true,
     .defaults = {.complexity = 8, .mic_complexity = 4, .kbps = 96, .mic = true, .ptt = true, .rumble = true,
-                 .rumble_pct = {100, 100}},
+                 .rumble_pct = {100, 100}, .mic_gain_db = {0, 12}},
     .repo_path = "firmware/esp32p4/console",
 };
 
@@ -491,6 +496,7 @@ static void test_console(void)
     dongle_settings_t set;
     settings_load(&s_build, &set);
     CHECK(set.complexity == 8 && set.kbps == 96 && set.ptt && set.gain_db == 0, "defaults");
+    CHECK(s_mic_gain[0] == 0 && s_mic_gain[1] == 12, "mic gains applied at load (%d, %d)", s_mic_gain[0], s_mic_gain[1]);
     console_start(true, 1);
 
     size_t m = mark();
@@ -521,6 +527,16 @@ static void test_console(void)
     CHECK(heard(m, "{\"t\":\"ok\",\"key\":\"ptt\"}", 1000) && s_kbps == 64 && s_complexity == 5 && !s_ptt,
           "bitrate, complexity, ptt reach the core");
     m = mark();
+    say("set mic_gain_builtin 18");
+    CHECK(heard(m, "{\"t\":\"ok\",\"key\":\"mic_gain_builtin\"}", 1000), "set mic_gain_builtin");
+    CHECK(heard(m, "\"mic_gain\":0,\"mic_gain_builtin\":18,", 1000), "settings show the mic gains");
+    say("set mic_gain -6");
+    CHECK(heard(m, "{\"t\":\"ok\",\"key\":\"mic_gain\"}", 1000) && s_mic_gain[0] == -6 && s_mic_gain[1] == 18,
+          "mic gains reach the core");
+    CHECK(board_kv_get_i8("console", "mgain_b", &g) && g == 18, "mic gain stored");
+    say("set mic_gain 31");
+    CHECK(heard(m, "{\"t\":\"err\",\"msg\":\"mic gain is -12..30 dB\"}", 1000), "mic gain range checked");
+    m = mark();
     say("set bitrate 999");
     CHECK(heard(m, "{\"t\":\"err\",\"msg\":\"bitrate is 32-160 kbps\"}", 1000), "range checked");
     say("pair");
@@ -538,6 +554,7 @@ static void test_console(void)
     dongle_settings_t again;
     settings_load(&s_build, &again);
     CHECK(again.gain_db == 0 && again.kbps == 96, "defaults stored");
+    CHECK(again.mic_gain_db[0] == 0 && again.mic_gain_db[1] == 12 && s_mic_gain[1] == 12, "mic gain defaults");
 
     /* a firmware update: 100 KB through the console link */
     size_t n = 100 * 1024 + 123;

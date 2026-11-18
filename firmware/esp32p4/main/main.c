@@ -45,6 +45,12 @@ static const char *TAG = "dongle";
 #ifndef CONFIG_DONGLE_OPUS_BITRATE
 #define CONFIG_DONGLE_OPUS_BITRATE 96
 #endif
+#ifndef CONFIG_DONGLE_MIC_GAIN
+#define CONFIG_DONGLE_MIC_GAIN 0
+#endif
+#ifndef CONFIG_DONGLE_MIC_GAIN_BUILTIN
+#define CONFIG_DONGLE_MIC_GAIN_BUILTIN 12
+#endif
 
 /* What this build offers, and the console's settings before anyone changes them (Kconfig). */
 static const dongle_build_t s_build = {
@@ -66,6 +72,7 @@ static const dongle_build_t s_build = {
 #if CONFIG_DONGLE_MIC_PUSH_TO_TALK
             .ptt = true,
 #endif
+            .mic_gain_db = {CONFIG_DONGLE_MIC_GAIN, CONFIG_DONGLE_MIC_GAIN_BUILTIN},
             .rumble = true,
             .rumble_pct = {100, 100},
         },
