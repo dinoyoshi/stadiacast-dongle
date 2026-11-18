@@ -79,8 +79,11 @@ CI builds the board firmware on every pull request too.
 
 Versions are git tags `vMAJOR.MINOR.PATCH` on `main`. Pushing one runs the
 [Release workflow](.github/workflows/release.yml), which builds the firmware at that commit and
-publishes a GitHub release with `stadiacast-dongle-full.bin` (first install), `stadiacast-dongle.bin`
-(console update), `firmware.json` and `SHA256SUMS`:
+publishes a GitHub release. Every file name carries the board it is for, so each board's build
+can sit in the same release; for the FireBeetle 2 ESP32-P4 that is
+`stadiacast-dongle-firebeetle2-esp32p4-full.bin` (first install),
+`stadiacast-dongle-firebeetle2-esp32p4.bin` (console update) and
+`firmware-firebeetle2-esp32p4.json`, plus one `SHA256SUMS` for all of them:
 
 ```sh
 git tag -a v1.0.0 -m "v1.0.0"

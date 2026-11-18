@@ -1,7 +1,9 @@
 # The dongle's web console (firmware/esp32p4/console/) on GitHub Pages, with the firmware next to
-# it: the console's "Update firmware" card installs firmware/stadiacast-dongle.bin from the same
-# site (same origin, so no CORS), and firmware/stadiacast-dongle-full.bin is the whole flash for a
-# first install over the programming port.
+# it: the console's "Update firmware" card reads firmware/firmware.json and installs the app image it
+# names (firmware/stadiacast-dongle-<board>.bin) from the same site (same origin, so no CORS), and
+# firmware/stadiacast-dongle-<board>-full.bin is the whole flash for a first install over the
+# programming port. The old names (stadiacast-dongle.bin, stadiacast-dongle-full.bin) stay as
+# copies of the FireBeetle 2 ESP32-P4's files, for links made before the board was in the name.
 # One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
 # Pull requests only build the firmware, which checks that it compiles.
 name: Web console and firmware (GitHub Pages)
@@ -57,6 +59,10 @@ jobs:
         with:
           name: firmware
           path: site/firmware
+      - name: the old file names
+        run: |
+          cp site/firmware/stadiacast-dongle-firebeetle2-esp32p4.bin site/firmware/stadiacast-dongle.bin
+          cp site/firmware/stadiacast-dongle-firebeetle2-esp32p4-full.bin site/firmware/stadiacast-dongle-full.bin
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

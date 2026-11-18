@@ -95,6 +95,11 @@ Add a job that builds the new board on every pull request, next to the FireBeetl
 `firmware/core/**`, `firmware/platform/**` and the board folder). Pin the toolchain version.
 Only the FireBeetle's image is published to Pages unless asked otherwise.
 
+Name the board's files as `firmware-build.yml` does for the FireBeetle: a short board id
+(`<maker-board>-<chip>`, for example `firebeetle2-esp32p4`) in `stadiacast-dongle-<board>.bin`,
+`stadiacast-dongle-<board>-full.bin` and `"board"` in its firmware.json. To ship it in releases,
+add its build to `.github/workflows/release.yml` (its own artifact, `firmware-<board>.json`).
+
 ## 8. Docs
 
 - `firmware/<board>/README.md`: what to buy, how to build and flash, which features work.
